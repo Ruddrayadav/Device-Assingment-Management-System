@@ -96,7 +96,7 @@
         <tbody>
           {% for t in recent_txs %}
           <tr>
-            <td class="mono" style="font-size: 0.8rem;">{{ t.transaction_time.strftime('%H:%M:%S') }}</td>
+            <td class="mono" style="font-size: 0.8rem;">{{ t.transaction_time|time12 }}</td>
             <td>
               <span class="badge {{ 'badge-issued' if t.transaction_type == 'Issue' else 'badge-available' }}">
                 {{ t.transaction_type }}

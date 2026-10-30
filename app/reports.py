@@ -10,6 +10,7 @@ from openpyxl.utils import get_column_letter
 from app.models import (
     Transaction, DamageReport, Device, DeviceAssignment, Employee, ShiftLog
 )
+from app.timefmt import fmt_datetime
 
 # Professional Color Palette
 NAVY_HEADER_FILL = PatternFill(start_color="1F4E78", end_color="1F4E78", fill_type="solid")
@@ -76,7 +77,7 @@ def generate_excel_report(
 
     ws1.append(["HHD DEVICE ALLOCATION - DAILY OPERATIONAL SUMMARY"])
     ws1.cell(row=1, column=1).font = TITLE_FONT
-    ws1.append([f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"])
+    ws1.append([f"Generated: {fmt_datetime(datetime.now())}"])
     ws1.cell(row=2, column=1).font = REGULAR_FONT
     ws1.append([])
 
@@ -162,7 +163,7 @@ def generate_excel_report(
     for t in txs:
         ws2.append([
             t.id,
-            t.transaction_time.strftime("%Y-%m-%d %H:%M:%S") if t.transaction_time else "",
+            fmt_datetime(t.transaction_time),
             t.operational_date,
             t.shift_name,
             t.operator_name,
@@ -216,7 +217,7 @@ def generate_excel_report(
     for d in dmgs:
         ws3.append([
             d.id,
-            d.report_time.strftime("%Y-%m-%d %H:%M:%S") if d.report_time else "",
+            fmt_datetime(d.report_time),
             d.operational_date,
             d.shift_name,
             d.serial,
@@ -228,7 +229,7 @@ def generate_excel_report(
             d.reported_by_name,
             d.review_status,
             d.resolution_notes or "",
-            d.resolved_at.strftime("%Y-%m-%d %H:%M:%S") if d.resolved_at else ""
+            fmt_datetime(d.resolved_at)
         ])
         for c in range(1, len(headers3) + 1):
             cell = ws3.cell(row=r3, column=c)
@@ -274,7 +275,7 @@ def generate_excel_report(
             emp.department if emp else "Unknown",
             asgn.issued_shift,
             asgn.issued_operational_date,
-            asgn.issued_at.strftime("%Y-%m-%d %H:%M:%S") if asgn.issued_at else "",
+            fmt_datetime(asgn.issued_at),
             asgn.issued_by_operator_name,
             dev.status if dev else "Issued"
         ])

@@ -51,7 +51,7 @@
         <tr>
           <td class="mono">{{ r.id }}</td>
           <td class="mono" style="font-size: 0.8rem; white-space: nowrap;">
-            {{ r.report_time.strftime('%Y-%m-%d %H:%M') if r.report_time else '' }}
+            {{ r.report_time|datetime12 }}
           </td>
           <td class="mono"><b>{{ r.serial }}</b></td>
           <td>

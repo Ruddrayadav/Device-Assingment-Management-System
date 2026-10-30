@@ -32,14 +32,6 @@
           <option value="admin">Administrator (Full Access)</option>
         </select>
       </div>
-      <div class="form-group">
-        <label for="default_shift">Default Shift</label>
-        <select id="default_shift" name="default_shift">
-          <option value="Morning">Morning Shift</option>
-          <option value="Evening">Evening Shift</option>
-          <option value="Night">Night Shift</option>
-        </select>
-      </div>
     </div>
     <button class="btn btn-primary" type="submit">Create User Account</button>
   </form>
@@ -55,7 +47,6 @@
           <th>Username</th>
           <th>Full Name</th>
           <th>Role</th>
-          <th>Default Shift</th>
           <th>Status</th>
           <th>Created At</th>
           <th>Actions</th>
@@ -71,13 +62,12 @@
               {{ u.role|upper }}
             </span>
           </td>
-          <td><span class="shift-tag">{{ u.default_shift }}</span></td>
           <td>
             <span class="badge {{ 'badge-available' if u.active else 'badge-damaged' }}">
               {{ 'Active' if u.active else 'Inactive' }}
             </span>
           </td>
-          <td class="mono" style="font-size: 0.8rem;">{{ u.created_at.strftime('%Y-%m-%d %H:%M') if u.created_at else '' }}</td>
+          <td class="mono" style="font-size: 0.8rem;">{{ u.created_at|datetime12 }}</td>
           <td>
             {% if u.id != user.id %}
             <form method="post" action="/admin/users/{{ u.id }}/toggle" style="display: inline;">

@@ -69,7 +69,7 @@
         <tr>
           <td class="mono">{{ t.id }}</td>
           <td class="mono" style="font-size: 0.8rem; white-space: nowrap;">
-            {{ t.transaction_time.strftime('%Y-%m-%d %H:%M:%S') if t.transaction_time else '' }}
+            {{ t.transaction_time|datetime12 }}
           </td>
           <td class="mono" style="font-size: 0.8rem;">{{ t.operational_date }}</td>
           <td><span class="shift-tag">{{ t.shift_name }}</span></td>

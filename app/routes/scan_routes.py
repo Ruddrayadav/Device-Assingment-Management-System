@@ -12,24 +12,46 @@ from app.scan_engine import (
     process_scan_pipeline, return_device_atomic, issue_device_atomic,
     sanitize_code, ScanException
 )
-from app.shifts import get_current_shift_and_op_date, get_operational_date_for_shift
+from app.shifts import get_current_shift_and_op_date
+from app.timefmt import fmt_time, fmt_datetime
 
 router = APIRouter(prefix="/api")
+
+def get_board_version(db: Session) -> str:
+    """
+    Fast 4-query version string including max(Device.updated_at).
+    """
+    today_str = date.today().isoformat()
+    last_tx_id = db.query(func.coalesce(func.max(Transaction.id), 0)).scalar() or 0
+    device_count = db.query(func.count(Device.serial)).scalar() or 0
+    open_issues = db.query(func.count(DamageReport.id)).filter(DamageReport.review_status == "Open").scalar() or 0
+    max_updated = db.query(func.coalesce(func.max(Device.updated_at), "")).scalar() or ""
+    max_updated_str = max_updated.isoformat() if hasattr(max_updated, "isoformat") else str(max_updated)
+    return f"{last_tx_id}|{device_count}|{open_issues}|{max_updated_str}|{today_str}"
 
 def get_live_board_data(db: Session) -> Dict[str, Any]:
     today_str = date.today().isoformat()
     t0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
 
     devices = db.query(Device).all()
+    
+    # Bulk query 1: All employees as a dict
+    employees_by_id = {e.employee_id: e for e in db.query(Employee).all()}
+
+    # Bulk query 2: Last Issue time per serial (GROUP BY serial)
+    last_tx_rows = db.query(
+        Transaction.serial,
+        func.max(Transaction.transaction_time)
+    ).filter(Transaction.transaction_type == "Issue").group_by(Transaction.serial).all()
+    last_ho_by_serial = {serial: max_t for serial, max_t in last_tx_rows}
+
     avail, allot, unavail, not_today = [], [], [], []
 
     for d in devices:
-        emp = db.query(Employee).filter(Employee.employee_id == d.assigned_employee_id).first() if d.assigned_employee_id else None
-        last_tx = db.query(Transaction).filter(
-            Transaction.serial == d.serial,
-            Transaction.transaction_type == "Issue"
-        ).order_by(Transaction.id.desc()).first()
-        last_time_str = last_tx.transaction_time.strftime("%Y-%m-%d %H:%M:%S") if last_tx else None
+        emp = employees_by_id.get(d.assigned_employee_id) if d.assigned_employee_id else None
+        last_dt = last_ho_by_serial.get(d.serial)
+        last_time_iso = last_dt.strftime("%Y-%m-%d %H:%M:%S") if last_dt else None
+        last_time_fmt = fmt_datetime(last_dt) if last_dt else ""
 
         it = {
             "serial": d.serial,
@@ -40,7 +62,8 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
             "eid": emp.employee_id if emp else "",
             "ename": emp.name if emp else "",
             "dept": emp.department if emp else "",
-            "last_ho": last_time_str
+            "last_ho": last_time_iso,
+            "last_ho_fmt": last_time_fmt
         }
 
         if d.status == "Available":
@@ -52,7 +75,7 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
 
         # Devices not issued today
         if d.status in ("Available", "Issued"):
-            if not last_tx or last_tx.transaction_time < t0:
+            if not last_dt or last_dt < t0:
                 not_today.append(it)
 
     # Sort
@@ -62,8 +85,8 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
     # Recent 15 transactions
     recent_txs = db.query(Transaction).order_by(Transaction.id.desc()).limit(15).all()
     recent = [{
-        "time": t.transaction_time.strftime("%H:%M:%S"),
-        "full_time": t.transaction_time.strftime("%Y-%m-%d %H:%M:%S"),
+        "time": fmt_time(t.transaction_time),
+        "full_time": fmt_datetime(t.transaction_time),
         "type": t.transaction_type,
         "serial": t.serial,
         "name": t.employee_name,
@@ -73,16 +96,21 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
         "shift": t.shift_name
     } for t in recent_txs]
 
-    open_issues = db.query(DamageReport).filter(DamageReport.review_status == "Open").count()
-    last_tx_id = db.query(func.coalesce(func.max(Transaction.id), 0)).scalar() or 0
-    version = f"{last_tx_id}|{len(devices)}|{open_issues}|{today_str}"
+    open_issues = db.query(func.count(DamageReport.id)).filter(DamageReport.review_status == "Open").scalar() or 0
+    version = get_board_version(db)
 
-    out_today = db.query(Transaction).filter(Transaction.transaction_type == "Issue", Transaction.transaction_time >= t0).count()
-    back_today = db.query(Transaction).filter(Transaction.transaction_type == "Return", Transaction.transaction_time >= t0).count()
+    out_today = db.query(func.count(Transaction.id)).filter(
+        Transaction.transaction_type == "Issue",
+        Transaction.transaction_time >= t0
+    ).scalar() or 0
+    back_today = db.query(func.count(Transaction.id)).filter(
+        Transaction.transaction_type == "Return",
+        Transaction.transaction_time >= t0
+    ).scalar() or 0
 
     return {
         "version": version,
-        "server_now": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "server_now": fmt_datetime(datetime.now()),
         "today": today_str,
         "available": avail,
         "allotted": allot,
@@ -114,14 +142,14 @@ async def handle_scan(
     user: User = Depends(require_user),
     db: Session = Depends(get_db)
 ):
-    active_shift = getattr(user, "active_shift", user.default_shift)
+    # Always active_shift=None so shift comes from server clock
     result = process_scan_pipeline(
         db=db,
         code=payload.code,
         mode=payload.mode,
         pending=payload.pending,
         operator=user,
-        active_shift=active_shift,
+        active_shift=None,
         idempotency_key=payload.idempotency_key
     )
 
@@ -129,24 +157,24 @@ async def handle_scan(
     board_data = get_live_board_data(db)
     result["board"] = board_data
 
-    # Current operator shift stats
-    _, op_date = get_current_shift_and_op_date()
+    # Current operator shift stats from clock
+    cur_shift, op_date = get_current_shift_and_op_date()
     op_issued = db.query(Transaction).filter(
         Transaction.operator_id == user.id,
         Transaction.operational_date == op_date,
-        Transaction.shift_name == active_shift,
+        Transaction.shift_name == cur_shift,
         Transaction.transaction_type == "Issue"
     ).count()
     op_returned = db.query(Transaction).filter(
         Transaction.operator_id == user.id,
         Transaction.operational_date == op_date,
-        Transaction.shift_name == active_shift,
+        Transaction.shift_name == cur_shift,
         Transaction.transaction_type == "Return"
     ).count()
 
     result["operator_stats"] = {
         "operator_name": user.full_name or user.username,
-        "shift": active_shift,
+        "shift": cur_shift,
         "issued_count": op_issued,
         "returned_count": op_returned,
         "total_transactions": op_issued + op_returned
@@ -167,7 +195,6 @@ async def handle_detailed_return(
     user: User = Depends(require_user),
     db: Session = Depends(get_db)
 ):
-    active_shift = getattr(user, "active_shift", user.default_shift)
     try:
         res = return_device_atomic(
             db=db,
@@ -176,7 +203,7 @@ async def handle_detailed_return(
             condition=payload.condition,
             damage_type=payload.damage_type,
             remarks=payload.remarks or "",
-            active_shift=active_shift,
+            active_shift=None,
             idempotency_key=payload.idempotency_key
         )
         return {
@@ -260,9 +287,10 @@ async def get_live_board(
     v: Optional[str] = None,
     db: Session = Depends(get_db)
 ):
-    data = get_live_board_data(db)
-    if v and v == data["version"]:
+    current_ver = get_board_version(db)
+    if v and v == current_ver:
         return {"changed": False}
+    data = get_live_board_data(db)
     return {"changed": True, "board": data}
 
 class QuickAddDevicePayload(BaseModel):
@@ -304,4 +332,3 @@ async def quick_add_device(
         "serial": serial_clean,
         "board": get_live_board_data(db)
     }
-

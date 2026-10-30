@@ -1,0 +1,12 @@
+data/
+backups/
+logs/
+.venv/
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+*.db
+*.db-wal
+*.db-shm
+.upload_*.part

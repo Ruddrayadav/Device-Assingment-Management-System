@@ -142,7 +142,7 @@
           </td>
           <td>{{ d.ename or 'In Stock' }}</td>
           <td>{{ d.dept or '—' }}</td>
-          <td class="mono">{{ d.last_ho or 'Never' }}</td>
+          <td class="mono">{{ d.last_ho_fmt or d.last_ho or 'Never' }}</td>
         </tr>
         {% else %}
         <tr>
@@ -158,6 +158,25 @@
 {% block scripts %}
 <script>
   let currentVersion = '{{ board.version }}';
+
+  function updateClock() {
+    const el = document.getElementById('board-clock');
+    if (!el) return;
+    const now = new Date();
+    let hours = now.getHours();
+    const minutes = String(now.getMinutes()).padStart(2, '0');
+    const seconds = String(now.getSeconds()).padStart(2, '0');
+    const ampm = hours >= 12 ? 'PM' : 'AM';
+    hours = hours % 12;
+    hours = hours ? hours : 12;
+    const strHours = String(hours).padStart(2, '0');
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    const dd = String(now.getDate()).padStart(2, '0');
+    el.textContent = `${yyyy}-${mm}-${dd} ${strHours}:${minutes}:${seconds} ${ampm}`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
 
   async function pollBoard() {
     try {
@@ -192,6 +211,24 @@
           </div>
         `).join('') || '<div class="text-muted">No devices currently allotted.</div>';
         document.getElementById('allot-container').innerHTML = allotHtml;
+
+        // Render Not Handed Over Today
+        const ntBody = document.getElementById('not-today-body');
+        if (ntBody) {
+          ntBody.innerHTML = data.board.not_today.map(d => `
+            <tr>
+              <td class="mono"><b>${d.serial}</b></td>
+              <td>
+                <span class="badge ${d.status === 'Issued' ? 'badge-issued' : 'badge-available'}">
+                  ${d.status}
+                </span>
+              </td>
+              <td>${d.ename || 'In Stock'}</td>
+              <td>${d.dept || '—'}</td>
+              <td class="mono">${d.last_ho_fmt || d.last_ho || 'Never'}</td>
+            </tr>
+          `).join('') || '<tr><td colspan="5" class="text-muted">Every device in the warehouse was handled today.</td></tr>';
+        }
       }
     } catch (e) {}
   }

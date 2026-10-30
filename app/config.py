@@ -3,8 +3,13 @@ import secrets
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
-DATA_DIR = BASE_DIR / "data"
-BACKUP_DIR = BASE_DIR / "backups"
+
+data_env = os.environ.get("HHD_DATA_DIR")
+DATA_DIR = Path(data_env).resolve() if data_env else BASE_DIR / "data"
+
+backup_env = os.environ.get("HHD_BACKUP_DIR")
+BACKUP_DIR = Path(backup_env).resolve() if backup_env else BASE_DIR / "backups"
+
 LOGS_DIR = BASE_DIR / "logs"
 
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -13,6 +18,8 @@ LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
 DB_PATH = DATA_DIR / "hhd_system.db"
 DATABASE_URL = f"sqlite:///{DB_PATH}"
+
+MAX_UPLOAD_MB = int(os.environ.get("HHD_MAX_UPLOAD_MB", "512"))
 
 def get_secret_key() -> str:
     env_secret = os.environ.get("HHD_SECRET_KEY")

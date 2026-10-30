@@ -368,8 +368,8 @@ class HHDSystemTestSuite(unittest.TestCase):
     def test_shift_reconciliation_math(self):
         db = TestSession()
         op1 = db.query(User).filter(User.username == "op1_test").first()
-        target_date = "2026-10-30"
         target_shift = "Morning"
+        target_date = get_operational_date_for_shift(target_shift, datetime.now())
 
         issue_device_atomic(db, "DEV001", "E101", op1, active_shift=target_shift)
         issue_device_atomic(db, "DEV002", "E102", op1, active_shift=target_shift)

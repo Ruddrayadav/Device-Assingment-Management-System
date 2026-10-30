@@ -8,6 +8,7 @@ from app.models import User
 from app.auth import get_current_user_optional, require_user
 from app.routes.scan_routes import get_live_board_data
 from app.config import DAMAGE_CATEGORIES
+from app.shifts import get_current_shift_and_op_date
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -23,7 +24,7 @@ async def operator_station(
     if not user:
         return RedirectResponse("/login?next=/", status_code=302)
 
-    active_shift = getattr(user, "active_shift", user.default_shift)
+    active_shift, _ = get_current_shift_and_op_date()
     board = get_live_board_data(db)
 
     return templates.TemplateResponse(request=request, name="operator.html", context={

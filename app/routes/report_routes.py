@@ -12,6 +12,7 @@ from app.database import get_db
 from app.models import User, Device, Employee, Transaction, DamageReport
 from app.auth import require_user, require_admin
 from app.reports import generate_excel_report
+from app.timefmt import fmt_datetime
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -61,7 +62,7 @@ async def export_devices_csv(
         writer.writerow([
             d.serial, d.make, d.model, d.cover_qty, d.status, d.condition,
             d.assigned_employee_id or "", emp.name if emp else "", emp.department if emp else "",
-            d.notes, d.updated_at.strftime("%Y-%m-%d %H:%M:%S") if d.updated_at else ""
+            d.notes, fmt_datetime(d.updated_at)
         ])
 
     csv_data = ("\ufeff" + output.getvalue()).encode("utf-8")
@@ -105,7 +106,7 @@ async def export_transactions_csv(
 
     for t in txs:
         writer.writerow([
-            t.id, t.transaction_time.strftime("%Y-%m-%d %H:%M:%S") if t.transaction_time else "",
+            t.id, fmt_datetime(t.transaction_time),
             t.operational_date, t.shift_name, t.transaction_type, t.serial,
             t.employee_id, t.employee_name, t.department, t.operator_name,
             t.condition, t.cover_qty, t.remarks
@@ -130,11 +131,11 @@ async def export_damage_csv(
 
     for d in dmgs:
         writer.writerow([
-            d.id, d.report_time.strftime("%Y-%m-%d %H:%M:%S") if d.report_time else "",
+            d.id, fmt_datetime(d.report_time),
             d.operational_date, d.shift_name, d.serial, d.employee_id or "", d.employee_name or "",
             d.department or "", d.fault_type, d.details, d.reported_by_name,
             d.review_status, d.resolution_notes or "",
-            d.resolved_at.strftime("%Y-%m-%d %H:%M:%S") if d.resolved_at else ""
+            fmt_datetime(d.resolved_at)
         ])
 
     csv_data = ("\ufeff" + output.getvalue()).encode("utf-8")

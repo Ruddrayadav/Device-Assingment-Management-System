@@ -18,6 +18,7 @@ from app.models import (
 from app.auth import require_admin, hash_password
 from app.shifts import calculate_shift_reconciliation, get_current_shift_and_op_date
 from app.config import DAMAGE_CATEGORIES, DEVICE_STATUSES
+from app.timefmt import fmt_datetime
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -118,7 +119,7 @@ async def admin_devices(
             "assigned_employee_id": d.assigned_employee_id,
             "employee_name": emp.name if emp else "",
             "department": emp.department if emp else "",
-            "updated_at": d.updated_at.strftime("%Y-%m-%d %H:%M") if d.updated_at else ""
+            "updated_at": fmt_datetime(d.updated_at)
         })
 
     return templates.TemplateResponse(request=request, name="admin/devices.html", context={
@@ -316,7 +317,7 @@ async def admin_employees(
             "active": e.active,
             "held_count": len(held),
             "held_serials": ", ".join(d.serial for d in held),
-            "updated_at": e.updated_at.strftime("%Y-%m-%d %H:%M") if e.updated_at else ""
+            "updated_at": fmt_datetime(e.updated_at)
         })
 
     return templates.TemplateResponse(request=request, name="admin/employees.html", context={
@@ -690,7 +691,6 @@ async def create_user(
     password: str = Form(...),
     full_name: str = Form(""),
     role: str = Form("operator"),
-    default_shift: str = Form("Morning"),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
@@ -708,7 +708,7 @@ async def create_user(
         password_hash=hash_password(password),
         full_name=full_name.strip() or uname,
         role=role,
-        default_shift=default_shift,
+        default_shift="Morning",
         active=True,
         created_at=now,
         updated_at=now

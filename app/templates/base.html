@@ -29,13 +29,13 @@
       <a href="/admin/damage" class="{{ 'active' if request.url.path.startswith('/admin/damage') }}">⚠️ Damage</a>
       <a href="/admin/reports" class="{{ 'active' if request.url.path.startswith('/admin/reports') }}">📥 Reports</a>
       <a href="/admin/users" class="{{ 'active' if request.url.path.startswith('/admin/users') }}">👥 Users</a>
-      <a href="/admin/backups" class="{{ 'active' if request.url.path.startswith('/admin/backups') }}">💾 Backups</a>
+      <a href="/admin/backups" class="{{ 'active' if request.url.path.startswith('/admin/backups') }}">🗄️ Database Files</a>
       {% endif %}
     </nav>
 
     <div class="user-info">
       <button class="btn btn-sm btn-secondary" id="sound-toggle" type="button">🔊 Sound On</button>
-      <span class="shift-tag">Shift: {{ active_shift or user.default_shift }}</span>
+      <span class="shift-tag">Shift: {{ current_shift() }}</span>
       <span><b>{{ user.full_name or user.username }}</b> ({{ user.role }})</span>
       <a href="/logout" class="btn btn-sm btn-secondary">Sign Out</a>
     </div>

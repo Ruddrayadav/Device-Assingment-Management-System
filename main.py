@@ -16,8 +16,19 @@ from app.routes import (
     auth_routes, operator_routes, scan_routes,
     admin_routes, report_routes, backup_routes
 )
+from app.templating import register_jinja_extensions
 
 templates = Jinja2Templates(directory=str(BASE_DIR / "app" / "templates"))
+
+for tmpl in [
+    templates,
+    auth_routes.templates,
+    operator_routes.templates,
+    admin_routes.templates,
+    report_routes.templates,
+    backup_routes.templates,
+]:
+    register_jinja_extensions(tmpl)
 
 def get_lan_ips():
     ips = []

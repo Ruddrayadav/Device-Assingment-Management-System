@@ -82,9 +82,6 @@ def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -
     if not data or "username" not in data:
         return None
     user = db.query(User).filter(User.username == data["username"], User.active == True).first()
-    if user:
-        # Attach active shift to user instance for the request
-        user.active_shift = data.get("shift_name", user.default_shift)
     return user
 
 def require_user(request: Request, db: Session = Depends(get_db)) -> User:

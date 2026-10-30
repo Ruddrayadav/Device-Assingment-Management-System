@@ -3,78 +3,164 @@
 {% block content %}
 <div class="flex-between" style="margin-bottom: 1.25rem;">
   <div>
-    <h1 style="font-size: 1.75rem; font-weight: 800;">Database Backups & Disaster Recovery</h1>
-    <div class="text-muted">Atomic online SQLite snapshots, integrity verification, and safe rollback</div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Database Files & Disaster Recovery</h1>
+    <div class="text-muted">Live SQLite database health, atomic snapshots, safe uploads, and disaster rollback</div>
   </div>
 </div>
 
-<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.25rem; margin-bottom: 1.5rem;">
-  <!-- Trigger Backup Card -->
-  <div class="card">
-    <div class="card-title">Run Safe Backup Now</div>
-    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
-      Uses SQLite's non-blocking online backup API. Safe to run at any moment without interrupting operators scanning on the warehouse floor.
-    </p>
-    <form method="post" action="/admin/backups/create">
-      <div class="form-group" style="margin-bottom: 1rem;">
-        <label for="custom_tag">Backup Tag / Note (Optional)</label>
-        <input id="custom_tag" name="custom_tag" placeholder="e.g. pre_shift_morning">
+<!-- Top Section: Live Database & Upload Form -->
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 1.25rem; margin-bottom: 1.5rem;">
+  
+  <!-- Live Database Card -->
+  <div class="card" style="border-left: 4px solid var(--accent-green);">
+    <div class="card-title">
+      <span>💾 Live Database</span>
+      <span class="badge badge-available">Active</span>
+    </div>
+    <div style="margin-bottom: 0.75rem;">
+      <div style="font-size: 0.85rem; color: var(--text-muted);">Database File</div>
+      <div class="mono" style="font-size: 1rem; font-weight: 700; color: var(--text-main);">{{ live_db.filename }}</div>
+    </div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;">
+      <div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">Size (+ WAL)</div>
+        <div class="mono" style="font-weight: 600;">{{ live_db.size_str }}</div>
       </div>
-      <button class="btn btn-primary" type="submit" style="width: 100%;">
-        💾 Create Database Snapshot
+      <div>
+        <div style="font-size: 0.8rem; color: var(--text-muted);">Last Scan Recorded</div>
+        <div class="mono" style="font-size: 0.85rem; font-weight: 600;">{{ live_db.last_scan_time }}</div>
+      </div>
+    </div>
+
+    <div style="background: var(--bg-main); padding: 0.75rem; border-radius: 6px; margin-bottom: 1rem;">
+      <div style="font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 0.4rem;">Live Record Counts</div>
+      <div style="display: flex; justify-content: space-between; font-size: 0.85rem;">
+        <span>👷 Employees: <b>{{ live_db.counts.employees }}</b></span>
+        <span>📱 Devices: <b>{{ live_db.counts.devices }}</b></span>
+        <span>📜 Transactions: <b>{{ live_db.counts.transactions }}</b></span>
+        <span>👥 Users: <b>{{ live_db.counts.users }}</b></span>
+      </div>
+    </div>
+
+    <form method="post" action="/admin/backups/create" style="display: flex; gap: 0.5rem;">
+      <input id="custom_tag" name="custom_tag" placeholder="Snapshot note/tag (optional)" style="flex: 1; padding: 0.4rem 0.6rem; font-size: 0.85rem;">
+      <button class="btn btn-primary" type="submit" style="white-space: nowrap;">
+        📸 Create Snapshot
       </button>
     </form>
   </div>
 
-  <!-- Best Practices & Automation -->
-  <div class="card">
-    <div class="card-title">Warehouse Reliability & Disaster Recovery</div>
-    <ul style="font-size: 0.875rem; color: var(--text-muted); line-height: 1.7; padding-left: 1.25rem;">
-      <li><b>Online Non-Blocking:</b> Database snapshots capture transactions without halting or corrupting in-flight scans.</li>
-      <li><b>Automatic Safety Copy:</b> If you restore an old backup, the system automatically saves a safety copy of the current database before replacing it.</li>
-      <li><b>Integrity Checked:</b> Restores are verified using SQLite <code class="mono">PRAGMA integrity_check</code> before being applied.</li>
-      <li><b>Windows Task Scheduler:</b> Configure Windows Task Scheduler to run daily copies of the <code class="mono">backups/</code> folder to an external network share or drive.</li>
-    </ul>
+  <!-- Upload Database Card -->
+  <div class="card" style="border-left: 4px solid var(--accent-blue);">
+    <div class="card-title">
+      <span>⬆️ Upload Database File</span>
+      <span class="badge badge-issued">Admin Only</span>
+    </div>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 0.75rem;">
+      Upload an external SQLite database (<code class="mono">.db</code>, <code class="mono">.sqlite</code>, <code class="mono">.sqlite3</code>). Files are verified for valid SQLite header, integrity, and core warehouse schema. Uploaded files are safely stored in <code class="mono">backups/</code> and are <b>never restored automatically</b>.
+    </p>
+
+    <form method="post" action="/admin/backups/upload" enctype="multipart/form-data">
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label for="db_file" style="font-size: 0.85rem;">Select SQLite Database File</label>
+        <input id="db_file" name="file" type="file" accept=".db,.sqlite,.sqlite3" required style="padding: 0.4rem 0; width: 100%;">
+      </div>
+      <button class="btn btn-secondary" type="submit" style="width: 100%;">
+        🔍 Upload & Verify Database
+      </button>
+    </form>
   </div>
+
 </div>
 
-<!-- Backups List -->
+<!-- Backups & Stored Database Files Table -->
 <div class="card">
-  <div class="card-title">
-    <span>Available Snapshots ({{ backups|length }})</span>
+  <div class="card-title flex-between">
+    <span>Stored Database Files in Backups ({{ backups|length }})</span>
   </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
-          <th>Snapshot File</th>
+          <th>File Name</th>
+          <th>Type</th>
+          <th>Inside Contents</th>
           <th>Size</th>
-          <th>Created Timestamp</th>
-          <th>Download</th>
-          <th>Restore Action</th>
+          <th>Saved At</th>
+          <th style="text-align: right;">Actions</th>
         </tr>
       </thead>
       <tbody>
         {% for b in backups %}
         <tr>
-          <td class="mono"><b>{{ b.filename }}</b></td>
-          <td>{{ b.size_kb }} KB</td>
-          <td class="mono" style="font-size: 0.8rem;">{{ b.created_at }}</td>
-          <td>
-            <a href="/admin/backups/download/{{ b.filename }}" class="btn btn-sm btn-secondary">
-              📥 Download .db
-            </a>
+          <td class="mono" style="font-size: 0.85rem;">
+            <b>{{ b.filename }}</b>
           </td>
           <td>
-            <form method="post" action="/admin/backups/restore" onsubmit="return confirm('WARNING: Are you sure you want to restore database from snapshot {{ b.filename }}? Current live data will be rolled back.');" style="display: inline;">
-              <input type="hidden" name="filename" value="{{ b.filename }}">
-              <button class="btn btn-sm btn-danger" type="submit">Restore DB</button>
-            </form>
+            {% if b.type == 'Snapshot' %}
+              <span class="badge badge-available">Snapshot</span>
+            {% elif b.type == 'Uploaded' %}
+              <span class="badge badge-issued">Uploaded</span>
+            {% elif b.type == 'Safety copy' %}
+              <span class="badge badge-repair">Safety copy</span>
+            {% else %}
+              <span class="badge badge-missing">Other</span>
+            {% endif %}
+          </td>
+          <td>
+            {% if b.valid %}
+              <div style="font-size: 0.8rem; line-height: 1.4;">
+                <span>👷 {{ b.counts.employees }} emps</span> ·
+                <span>📱 {{ b.counts.devices }} devs</span> ·
+                <span>📜 {{ b.counts.transactions }} txs</span> ·
+                <span>👥 {{ b.counts.users }} users</span>
+                <div class="text-muted" style="font-size: 0.75rem;">Last scan: {{ b.last_scan_time }}</div>
+              </div>
+            {% else %}
+              <span class="badge badge-damaged">Invalid / Incompatible</span>
+              <div class="text-danger" style="font-size: 0.75rem; margin-top: 0.2rem;" title="{{ b.error }}">
+                {{ b.error|truncate(55) }}
+              </div>
+            {% endif %}
+          </td>
+          <td class="mono" style="font-size: 0.85rem;">{{ b.size_str }}</td>
+          <td class="mono" style="font-size: 0.8rem;">{{ b.saved_at }}</td>
+          <td style="text-align: right; white-space: nowrap;">
+            <div style="display: inline-flex; gap: 0.4rem; align-items: center;">
+              <!-- Download -->
+              <a href="/admin/backups/download/{{ b.filename }}" class="btn btn-sm btn-secondary" title="Download database file">
+                📥 Download
+              </a>
+
+              <!-- Restore -->
+              {% if b.valid %}
+                <form method="post" action="/admin/backups/restore" onsubmit="return confirm('WARNING: Are you sure you want to restore the live database from snapshot {{ b.filename }}?\n\nA safety copy of the current live database will be created automatically before restoring.');" style="display: inline;">
+                  <input type="hidden" name="filename" value="{{ b.filename }}">
+                  <button class="btn btn-sm btn-danger" type="submit" title="Rollback/Restore database from this file">
+                    Restore
+                  </button>
+                </form>
+              {% else %}
+                <button class="btn btn-sm btn-secondary" disabled title="Restore disabled: {{ b.error }}" style="opacity: 0.45; cursor: not-allowed;">
+                  Restore
+                </button>
+              {% endif %}
+
+              <!-- Delete -->
+              <form method="post" action="/admin/backups/delete" onsubmit="return confirm('Are you sure you want to permanently delete backup file {{ b.filename }}? This cannot be undone.');" style="display: inline;">
+                <input type="hidden" name="filename" value="{{ b.filename }}">
+                <button class="btn btn-sm btn-secondary" type="submit" style="color: #ef4444; border-color: rgba(239,68,68,0.3);" title="Delete file">
+                  🗑️
+                </button>
+              </form>
+            </div>
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="5" class="text-muted">No backup snapshots exist yet. Create one above!</td>
+          <td colspan="6" class="text-muted" style="text-align: center; padding: 2rem;">
+            No backup database files found in <code class="mono">backups/</code>. Create a snapshot or upload a database above.
+          </td>
         </tr>
         {% endfor %}
       </tbody>
@@ -82,4 +168,3 @@
   </div>
 </div>
 {% endblock %}
-

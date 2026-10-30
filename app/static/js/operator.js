@@ -29,12 +29,36 @@
   let bannerTimer = null;
   let boardVersion = '';
 
+  // FIFO Scan Queue for serializing rapid consecutive scans
+  const scanQueue = [];
+  let isQueueProcessing = false;
+
+  function enqueueScan(code) {
+    if (!code) return;
+    scanQueue.push(code);
+    processScanQueue();
+  }
+
+  async function processScanQueue() {
+    if (isQueueProcessing || scanQueue.length === 0) return;
+    isQueueProcessing = true;
+    const code = scanQueue.shift();
+    try {
+      await sendScanRequest(code);
+    } finally {
+      isQueueProcessing = false;
+      if (scanQueue.length > 0) {
+        processScanQueue();
+      }
+    }
+  }
+
   // Initialize Scanner Engine
   const scanner = new BarcodeScannerEngine({
     inputElement: scanInput,
     minBarcodeLength: 4,
     burstTimeoutMs: 65,
-    onScanComplete: (code) => handleScan(code)
+    onScanComplete: (code) => enqueueScan(code)
   });
 
   scanner.onEscape = () => resetPending();
@@ -124,6 +148,8 @@
   }
 
   function resetPending() {
+    scanQueue.length = 0; // Clear the FIFO queue
+    isQueueProcessing = false;
     pendingState = null;
     pendingContainer.style.display = 'none';
     pendingContainer.innerHTML = '';
@@ -132,8 +158,8 @@
     scanner.ensureFocus();
   }
 
-  // Handle Barcode Scan Event
-  async function handleScan(code) {
+  // Send Barcode Scan Request to API
+  async function sendScanRequest(code) {
     if (!code) return;
 
     try {

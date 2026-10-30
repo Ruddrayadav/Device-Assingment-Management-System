@@ -30,7 +30,6 @@ async def login_submit(
     request: Request,
     username: str = Form(...),
     password: str = Form(...),
-    shift_name: str = Form("Morning"),
     next_url: str = Form("/"),
     db: Session = Depends(get_db)
 ):
@@ -49,8 +48,7 @@ async def login_submit(
         "user_id": user.id,
         "username": user.username,
         "role": user.role,
-        "full_name": user.full_name or user.username,
-        "shift_name": shift_name
+        "full_name": user.full_name or user.username
     }
     token = sign_session(session_data, max_age_seconds=43200)
 

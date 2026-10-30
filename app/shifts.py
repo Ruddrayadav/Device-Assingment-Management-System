@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, and_, or_
 from app.config import SHIFT_DEFINITIONS
 from app.models import Transaction, DeviceAssignment, Device, DamageReport, ShiftLog, Employee
+from app.timefmt import fmt_datetime
 
 def get_current_shift_and_op_date(dt: datetime = None) -> Tuple[str, str]:
     """
@@ -94,7 +95,7 @@ def calculate_shift_reconciliation(db: Session, operational_date: str, shift_nam
             "employee_id": asgn.employee_id,
             "employee_name": emp.name if emp else "Unknown",
             "department": emp.department if emp else "Unknown",
-            "issued_at": asgn.issued_at.strftime("%Y-%m-%d %H:%M:%S"),
+            "issued_at": fmt_datetime(asgn.issued_at),
             "issued_by": asgn.issued_by_operator_name,
             "current_status": dev.status if dev else "Unknown"
         })
@@ -119,7 +120,7 @@ def calculate_shift_reconciliation(db: Session, operational_date: str, shift_nam
         "operational_date": operational_date,
         "shift_name": shift_name,
         "is_closed": is_closed,
-        "closed_at": shift_log.closed_at.strftime("%Y-%m-%d %H:%M:%S") if (shift_log and shift_log.closed_at) else None,
+        "closed_at": fmt_datetime(shift_log.closed_at) if (shift_log and shift_log.closed_at) else None,
         "closed_by": shift_log.closed_by_name if shift_log else None,
         "total_issued": total_issued,
         "total_returned": total_returned,
