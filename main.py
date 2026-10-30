@@ -12,9 +12,11 @@ from app.config import SERVER_HOST, SERVER_PORT, BASE_DIR, DATA_DIR, LOGS_DIR, B
 from app.database import engine, Base, SessionLocal
 from app.models import User, Employee, Device
 from app.auth import hash_password
+from app.migration import run_schema_migration
 from app.routes import (
     auth_routes, operator_routes, scan_routes,
-    admin_routes, report_routes, backup_routes
+    admin_routes, report_routes, backup_routes,
+    import_routes
 )
 from app.templating import register_jinja_extensions
 
@@ -27,6 +29,7 @@ for tmpl in [
     admin_routes.templates,
     report_routes.templates,
     backup_routes.templates,
+    import_routes.templates,
 ]:
     register_jinja_extensions(tmpl)
 
@@ -54,9 +57,9 @@ def get_lan_ips():
     return ips or ["127.0.0.1"]
 
 def seed_initial_data_if_needed():
+    """Seeds minimal initial administrator and operators only if database is completely empty."""
     db = SessionLocal()
     try:
-        # Seed Admin & Operator if no users exist
         user_count = db.query(User).count()
         now = datetime.now()
         if user_count == 0:
@@ -65,7 +68,6 @@ def seed_initial_data_if_needed():
                 password_hash=hash_password("admin12345"),
                 full_name="Warehouse Administrator",
                 role="admin",
-                default_shift="Morning",
                 active=True,
                 created_at=now,
                 updated_at=now
@@ -73,9 +75,8 @@ def seed_initial_data_if_needed():
             op1 = User(
                 username="operator1",
                 password_hash=hash_password("operator123"),
-                full_name="Morning Operator",
+                full_name="Rahul (Operator 1)",
                 role="operator",
-                default_shift="Morning",
                 active=True,
                 created_at=now,
                 updated_at=now
@@ -83,88 +84,45 @@ def seed_initial_data_if_needed():
             op2 = User(
                 username="operator2",
                 password_hash=hash_password("operator123"),
-                full_name="Evening Operator",
+                full_name="Amit (Operator 2)",
                 role="operator",
-                default_shift="Evening",
                 active=True,
                 created_at=now,
                 updated_at=now
             )
             db.add_all([admin_user, op1, op2])
-
-        # Seed initial employees if needed
-        sample_emps = [
-            ("1222905", "Ajay Kumar", "IB Puter"),
-            ("1332772", "Sonu", "IB Puter"),
-            ("1334506", "Rajkumar", "IB Receiver"),
-            ("1331118", "Sunny", "RTO Puter"),
-            ("1266377", "Ravinder", "RTO Associate"),
-            ("1205341", "Sanjeev Kumar", "Dispatch Scanner"),
-            ("1282781", "Bhupender", "RTO Puter"),
-            ("1208400", "Sukhbir Singh", "Dispatch Scanner"),
-            ("1192873", "Parmjeet", "Dispatch Scanner"),
-            ("1163679", "Rajender", "Dispatch Scanner")
-        ]
-        for eid, ename, edept in sample_emps:
-            if not db.query(Employee).filter(Employee.employee_id == eid).first():
-                db.add(Employee(
-                    employee_id=eid,
-                    name=ename,
-                    department=edept,
-                    active=True,
-                    created_at=now,
-                    updated_at=now
-                ))
-
-        # Seed initial devices if needed
-        sample_serials = [
-            "HC660DE260502008", "HC660DE260501682", "HC660DE260504219", "HC660DE260501783",
-            "HC660DE260501876", "HC660DE260501990", "HC660DE260501274", "HC660DE260401747",
-            "HC660DE260501998", "HC660DE260501980"
-        ]
-        for s in sample_serials:
-            if not db.query(Device).filter(Device.serial == s).first():
-                db.add(Device(
-                    serial=s,
-                    make="CHAINWAY",
-                    model="HHD",
-                    cover_qty=2,
-                    status="Available",
-                    condition="Working",
-                    notes="Initial warehouse inventory",
-                    created_at=now,
-                    updated_at=now
-                ))
-
-        db.commit()
+            db.commit()
     finally:
         db.close()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Initialize tables
+    # 1. Run safe schema migration for existing databases
+    run_schema_migration()
+    # 2. Ensure all tables and indexes exist
     Base.metadata.create_all(bind=engine)
-    # 2. Seed default data if fresh database
+    # 3. Seed minimal accounts if fresh
     seed_initial_data_if_needed()
 
     lan_ips = get_lan_ips()
     primary_ip = lan_ips[0]
-    print("\n" + "=" * 65)
-    print(" HHD DEVICE MANAGEMENT SYSTEM — SERVER ACTIVE")
-    print("=" * 65)
+    print("\n" + "=" * 68)
+    print(" HHD DEVICE MANAGEMENT SYSTEM — VERSION 3.0 (24/7 CONTINUOUS)")
+    print("=" * 68)
     print(f" Local Access:        http://127.0.0.1:{SERVER_PORT}")
     print(f" LAN Access (PCs):    http://{primary_ip}:{SERVER_PORT}")
     print(f" Wall Display Board:  http://{primary_ip}:{SERVER_PORT}/board")
+    print(f" Excel Master Import: http://{primary_ip}:{SERVER_PORT}/admin/import")
     print(f" Admin Credentials:   Username: hhdadmin / Password: admin12345")
     print(f" Operator 1 Login:    Username: operator1 / Password: operator123")
     print(f" Operator 2 Login:    Username: operator2 / Password: operator123")
-    print("=" * 65 + "\n")
+    print("=" * 68 + "\n")
     yield
 
 app = FastAPI(
     title="HHD Device Management System",
-    description="High-Speed Warehouse Device Handover & Takeover Management System",
-    version="2.0.0",
+    description="24/7 Continuous Warehouse Device Handover & Allocation Management System",
+    version="3.0.0",
     lifespan=lifespan
 )
 
@@ -178,6 +136,7 @@ app.include_router(scan_routes.router)
 app.include_router(admin_routes.router)
 app.include_router(report_routes.router)
 app.include_router(backup_routes.router)
+app.include_router(import_routes.router)
 
 # Global 404 / Error Handlers
 @app.exception_handler(404)

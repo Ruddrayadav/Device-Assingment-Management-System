@@ -59,7 +59,10 @@ def sign_session(data: Dict[str, Any], max_age_seconds: int = 43200) -> str:
     return f"{b64_payload}.{signature}"
 
 def decode_session(token: str) -> Optional[Dict[str, Any]]:
-    if not token or "." not in token:
+    if not token:
+        return None
+    token = token.strip('"')
+    if "." not in token:
         return None
     try:
         b64_payload, signature = token.rsplit(".", 1)

@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy import (
     Column, Integer, String, Boolean, DateTime, Text,
     ForeignKey, Index
@@ -14,7 +14,6 @@ class User(Base):
     password_hash = Column(String(255), nullable=False)
     full_name = Column(String(100), nullable=False, default="")
     role = Column(String(20), nullable=False, default="operator")  # "admin" or "operator"
-    default_shift = Column(String(20), nullable=False, default="Morning")
     active = Column(Boolean, nullable=False, default=True)
     created_at = Column(DateTime, nullable=False, default=datetime.now)
     updated_at = Column(DateTime, nullable=False, default=datetime.now, onupdate=datetime.now)
@@ -42,6 +41,8 @@ class Device(Base):
     serial = Column(String(64), primary_key=True, index=True)
     make = Column(String(50), nullable=False, default="CHAINWAY")
     model = Column(String(50), nullable=False, default="HHD")
+    department = Column(String(100), nullable=False, default="GENERAL", index=True)
+    inventory_date = Column(String(50), nullable=True)
     cover_qty = Column(Integer, nullable=False, default=0)
     status = Column(String(30), nullable=False, default="Available", index=True)  # Available, Issued, Damaged, Missing, Under Repair
     assigned_employee_id = Column(String(64), ForeignKey("employees.employee_id"), nullable=True, index=True)
@@ -63,16 +64,14 @@ class DeviceAssignment(Base):
     employee_id = Column(String(64), ForeignKey("employees.employee_id"), nullable=False, index=True)
     
     issued_at = Column(DateTime, nullable=False, default=datetime.now, index=True)
+    issued_date = Column(String(10), nullable=False, default=lambda: date.today().isoformat(), index=True)
     issued_by_operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     issued_by_operator_name = Column(String(100), nullable=False, default="")
-    issued_shift = Column(String(20), nullable=False, default="Morning")
-    issued_operational_date = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
 
     returned_at = Column(DateTime, nullable=True, index=True)
+    returned_date = Column(String(10), nullable=True, index=True)
     returned_by_operator_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     returned_by_operator_name = Column(String(100), nullable=True)
-    returned_shift = Column(String(20), nullable=True)
-    returned_operational_date = Column(String(10), nullable=True, index=True)
 
     status = Column(String(20), nullable=False, default="ACTIVE", index=True)  # ACTIVE, RETURNED
     condition_on_return = Column(String(30), nullable=True)
@@ -86,8 +85,7 @@ class Transaction(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     transaction_time = Column(DateTime, nullable=False, default=datetime.now, index=True)
-    operational_date = Column(String(10), nullable=False, index=True)  # YYYY-MM-DD
-    shift_name = Column(String(20), nullable=False, index=True)       # Morning, Evening, Night
+    transaction_date = Column(String(10), nullable=False, default=lambda: date.today().isoformat(), index=True)  # YYYY-MM-DD
     transaction_type = Column(String(20), nullable=False, index=True)  # Issue, Return
     serial = Column(String(64), ForeignKey("devices.serial"), nullable=False, index=True)
     employee_id = Column(String(64), ForeignKey("employees.employee_id"), nullable=False, index=True)
@@ -109,8 +107,7 @@ class DamageReport(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     report_time = Column(DateTime, nullable=False, default=datetime.now, index=True)
-    operational_date = Column(String(10), nullable=False, index=True)
-    shift_name = Column(String(20), nullable=False, index=True)
+    report_date = Column(String(10), nullable=False, default=lambda: date.today().isoformat(), index=True)
     serial = Column(String(64), ForeignKey("devices.serial"), nullable=False, index=True)
     employee_id = Column(String(64), ForeignKey("employees.employee_id"), nullable=True, index=True)
     employee_name = Column(String(120), nullable=False, default="")
@@ -127,26 +124,6 @@ class DamageReport(Base):
     device = relationship("Device", back_populates="damage_reports")
     reporter = relationship("User", back_populates="damage_reports")
 
-class ShiftLog(Base):
-    __tablename__ = "shift_logs"
-
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    operational_date = Column(String(10), nullable=False, index=True)
-    shift_name = Column(String(20), nullable=False, index=True)
-    opened_at = Column(DateTime, nullable=False, default=datetime.now)
-    closed_at = Column(DateTime, nullable=True)
-    status = Column(String(20), nullable=False, default="OPEN", index=True)  # OPEN, CLOSED
-    closed_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
-    closed_by_name = Column(String(100), nullable=False, default="")
-    
-    total_issued = Column(Integer, nullable=False, default=0)
-    total_returned = Column(Integer, nullable=False, default=0)
-    total_working = Column(Integer, nullable=False, default=0)
-    total_damaged = Column(Integer, nullable=False, default=0)
-    total_missing = Column(Integer, nullable=False, default=0)
-    total_outstanding = Column(Integer, nullable=False, default=0)
-    notes = Column(Text, nullable=False, default="")
-
 class AuditLog(Base):
     __tablename__ = "audit_logs"
 
@@ -159,9 +136,10 @@ class AuditLog(Base):
     target_id = Column(String(100), nullable=False, default="")
     details = Column(Text, nullable=False, default="")
 
-# Composite indexes for high-throughput queries
-Index("idx_tx_opdate_shift", Transaction.operational_date, Transaction.shift_name)
+# Composite indexes for high-throughput 24/7 queries
+Index("idx_tx_date_type", Transaction.transaction_date, Transaction.transaction_type)
+Index("idx_tx_operator", Transaction.operator_name, Transaction.transaction_date)
 Index("idx_asgn_active_dev", DeviceAssignment.status, DeviceAssignment.device_serial)
 Index("idx_asgn_active_emp", DeviceAssignment.status, DeviceAssignment.employee_id)
 Index("idx_dmg_open_serial", DamageReport.serial, DamageReport.review_status)
-
+Index("idx_device_dept", Device.department)

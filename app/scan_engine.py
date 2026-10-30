@@ -1,14 +1,13 @@
 import re
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func, or_
 from app.database import SCAN_WRITE_LOCK
 from app.models import (
     Device, Employee, DeviceAssignment, Transaction,
-    DamageReport, User, ShiftLog
+    DamageReport, User
 )
-from app.shifts import get_current_shift_and_op_date, get_operational_date_for_shift
 from app.config import DAMAGE_CATEGORIES
 
 class ScanException(Exception):
@@ -65,12 +64,11 @@ def issue_device_atomic(
     device_serial: str,
     employee_id: str,
     operator: User,
-    active_shift: Optional[str] = None,
     idempotency_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Atomically issues a device to an employee with thread and database level protection.
-    Guarantees zero duplicate allocations.
+    Guarantees zero duplicate allocations. 24/7 continuous operation.
     """
     with SCAN_WRITE_LOCK:
         # Check idempotency
@@ -111,20 +109,23 @@ def issue_device_atomic(
             )
 
         now = datetime.now()
-        shift_name, op_date = get_current_shift_and_op_date(now)
-        if active_shift:
-            shift_name = active_shift
-            op_date = get_operational_date_for_shift(active_shift, now)
+        date_str = now.strftime("%Y-%m-%d")
+
+        if isinstance(operator, User):
+            op_id = operator.id
+            op_name = operator.full_name or operator.username
+        else:
+            op_id = int(operator) if isinstance(operator, int) else getattr(operator, "id", None)
+            op_name = getattr(operator, "full_name", None) or getattr(operator, "username", None) or str(operator)
 
         # 3. Create DeviceAssignment record
         assignment = DeviceAssignment(
             device_serial=dev.serial,
             employee_id=emp.employee_id,
             issued_at=now,
-            issued_by_operator_id=operator.id,
-            issued_by_operator_name=operator.full_name or operator.username,
-            issued_shift=shift_name,
-            issued_operational_date=op_date,
+            issued_date=date_str,
+            issued_by_operator_id=op_id,
+            issued_by_operator_name=op_name,
             status="ACTIVE"
         )
         db.add(assignment)
@@ -138,15 +139,14 @@ def issue_device_atomic(
         # 5. Insert Transaction audit record
         tx = Transaction(
             transaction_time=now,
-            operational_date=op_date,
-            shift_name=shift_name,
+            transaction_date=date_str,
             transaction_type="Issue",
             serial=dev.serial,
             employee_id=emp.employee_id,
             employee_name=emp.name,
             department=emp.department,
-            operator_id=operator.id,
-            operator_name=operator.full_name or operator.username,
+            operator_id=op_id,
+            operator_name=op_name,
             condition="Working",
             cover_qty=dev.cover_qty,
             remarks="Normal Issue",
@@ -176,8 +176,8 @@ def issue_device_atomic(
                 "model": dev.model,
                 "cover_qty": dev.cover_qty
             },
-            "shift": shift_name,
-            "operational_date": op_date,
+            "timestamp": now.strftime("%Y-%m-%d %I:%M:%S %p"),
+            "operator": op_name,
             "message": f"Issued to {emp.name} ({emp.department})" + (f" · Now holds {held_count} devices" if held_count > 1 else "")
         }
 
@@ -188,12 +188,11 @@ def return_device_atomic(
     condition: str = "Working",
     damage_type: Optional[str] = None,
     remarks: str = "",
-    active_shift: Optional[str] = None,
     idempotency_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Atomically returns a device from whichever worker currently holds it.
-    Zero need to scan employee ID again.
+    Zero need to scan employee ID again. 24/7 continuous operation.
     """
     with SCAN_WRITE_LOCK:
         # Check idempotency
@@ -223,10 +222,14 @@ def return_device_atomic(
         emp_id = emp.employee_id if emp else (dev.assigned_employee_id or "UNKNOWN")
 
         now = datetime.now()
-        shift_name, op_date = get_current_shift_and_op_date(now)
-        if active_shift:
-            shift_name = active_shift
-            op_date = get_operational_date_for_shift(active_shift, now)
+        date_str = now.strftime("%Y-%m-%d")
+
+        if isinstance(operator, User):
+            op_id = operator.id
+            op_name = operator.full_name or operator.username
+        else:
+            op_id = int(operator) if isinstance(operator, int) else getattr(operator, "id", None)
+            op_name = getattr(operator, "full_name", None) or getattr(operator, "username", None) or str(operator)
 
         # 1. Update active DeviceAssignment
         asgn = db.query(DeviceAssignment).filter(
@@ -240,10 +243,9 @@ def return_device_atomic(
 
         if asgn:
             asgn.returned_at = now
-            asgn.returned_by_operator_id = operator.id
-            asgn.returned_by_operator_name = operator.full_name or operator.username
-            asgn.returned_shift = shift_name
-            asgn.returned_operational_date = op_date
+            asgn.returned_date = date_str
+            asgn.returned_by_operator_id = op_id
+            asgn.returned_by_operator_name = op_name
             asgn.status = "RETURNED"
             asgn.condition_on_return = final_condition
             asgn.remarks = remarks
@@ -263,16 +265,15 @@ def return_device_atomic(
         if final_condition != "Working":
             dmg = DamageReport(
                 report_time=now,
-                operational_date=op_date,
-                shift_name=shift_name,
+                report_date=date_str,
                 serial=dev.serial,
                 employee_id=emp_id,
                 employee_name=emp_name,
                 department=emp_dept,
                 fault_type=damage_type or final_condition,
                 details=remarks or "Reported during return",
-                reported_by_id=operator.id,
-                reported_by_name=operator.full_name or operator.username,
+                reported_by_id=op_id,
+                reported_by_name=op_name,
                 review_status="Open"
             )
             db.add(dmg)
@@ -280,15 +281,14 @@ def return_device_atomic(
         # 4. Record Transaction
         tx = Transaction(
             transaction_time=now,
-            operational_date=op_date,
-            shift_name=shift_name,
+            transaction_date=date_str,
             transaction_type="Return",
             serial=dev.serial,
             employee_id=emp_id,
             employee_name=emp_name,
             department=emp_dept,
-            operator_id=operator.id,
-            operator_name=operator.full_name or operator.username,
+            operator_id=op_id,
+            operator_name=op_name,
             condition=final_condition,
             cover_qty=dev.cover_qty,
             remarks=remarks or (f"Returned condition: {final_condition}"),
@@ -312,8 +312,8 @@ def return_device_atomic(
                 "status": dev.status,
                 "condition": dev.condition
             },
-            "shift": shift_name,
-            "operational_date": op_date,
+            "timestamp": now.strftime("%Y-%m-%d %I:%M:%S %p"),
+            "operator": op_name,
             "message": f"Returned from {emp_name} ({emp_dept})" + ("" if final_condition == "Working" else f" · Marked {final_condition}")
         }
 
@@ -323,12 +323,13 @@ def process_scan_pipeline(
     mode: str,
     pending: Optional[Dict[str, str]],
     operator: User,
-    active_shift: Optional[str] = None,
     idempotency_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     High-speed, zero-enter unified scan pipeline.
     Resolves code, manages pending state, executes atomic actions without page reload.
+    Supports both Employee-first and Device-first Issue workflows.
+    24/7 continuous operation.
     """
     code = sanitize_code(code)
     if not code:
@@ -378,7 +379,6 @@ def process_scan_pipeline(
                 device_serial=dev.serial,
                 operator=operator,
                 condition="Working",
-                active_shift=active_shift,
                 idempotency_key=idempotency_key
             )
             return {
@@ -407,9 +407,7 @@ def process_scan_pipeline(
     try:
         # Case 1: Device scanned
         if dev:
-            # If device is already issued, scan alone in Issue mode gives clear guidance
             if dev.status == "Issued":
-                # Quick take back or clear message
                 holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
                 holder_name = holder.name if holder else dev.assigned_employee_id
                 return {
@@ -436,7 +434,6 @@ def process_scan_pipeline(
                     device_serial=dev.serial,
                     employee_id=p_code,
                     operator=operator,
-                    active_shift=active_shift,
                     idempotency_key=idempotency_key
                 )
                 return {
@@ -482,7 +479,6 @@ def process_scan_pipeline(
                     device_serial=p_code,
                     employee_id=emp.employee_id,
                     operator=operator,
-                    active_shift=active_shift,
                     idempotency_key=idempotency_key
                 )
                 return {
@@ -523,4 +519,3 @@ def process_scan_pipeline(
             "message": ex.message,
             "pending": pending
         }
-

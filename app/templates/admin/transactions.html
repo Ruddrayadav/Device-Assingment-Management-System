@@ -3,8 +3,8 @@
 {% block content %}
 <div class="flex-between" style="margin-bottom: 1.25rem;">
   <div>
-    <h1 style="font-size: 1.75rem; font-weight: 800;">Transaction Audit Trail</h1>
-    <div class="text-muted">Permanent, tamper-evident log of every device issue and return across all shifts</div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Transaction Audit Trail (24/7 Continuous)</h1>
+    <div class="text-muted">Permanent, tamper-evident log of every device issue and return with operator identity</div>
   </div>
   <div style="display: flex; gap: 0.5rem;">
     <a href="/reports/csv/transactions" class="btn btn-secondary">📥 Export CSV</a>
@@ -14,12 +14,12 @@
 <!-- Filters -->
 <div class="card" style="padding: 1rem;">
   <form method="get" action="/admin/transactions" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
-    <div class="form-group" style="flex: 2; min-width: 200px;">
+    <div class="form-group" style="flex: 2; min-width: 180px;">
       <label for="q">Search Keyword</label>
-      <input id="q" name="q" value="{{ q }}" placeholder="Serial, Employee ID, Name or Operator...">
+      <input id="q" name="q" value="{{ q }}" placeholder="Serial, Employee ID, Name...">
     </div>
-    <div class="form-group" style="flex: 1; min-width: 140px;">
-      <label for="type_filter">Action</label>
+    <div class="form-group" style="flex: 1; min-width: 130px;">
+      <label for="type_filter">Action Type</label>
       <select id="type_filter" name="type_filter">
         <option value="All">All Actions</option>
         <option value="Issue" {{ 'selected' if type_filter == 'Issue' else '' }}>Issue (Handover)</option>
@@ -27,17 +27,30 @@
       </select>
     </div>
     <div class="form-group" style="flex: 1; min-width: 140px;">
-      <label for="shift_filter">Shift</label>
-      <select id="shift_filter" name="shift_filter">
-        <option value="All">All Shifts</option>
-        <option value="Morning" {{ 'selected' if shift_filter == 'Morning' else '' }}>Morning</option>
-        <option value="Evening" {{ 'selected' if shift_filter == 'Evening' else '' }}>Evening</option>
-        <option value="Night" {{ 'selected' if shift_filter == 'Night' else '' }}>Night</option>
+      <label for="operator_filter">Operator</label>
+      <select id="operator_filter" name="operator_filter">
+        <option value="All">All Operators</option>
+        {% for op in operators %}
+        <option value="{{ op }}" {{ 'selected' if operator_filter == op else '' }}>{{ op }}</option>
+        {% endfor %}
       </select>
     </div>
     <div class="form-group" style="flex: 1; min-width: 140px;">
-      <label for="date_filter">Operational Date</label>
-      <input id="date_filter" name="date_filter" type="date" value="{{ date_filter }}">
+      <label for="dept_filter">Department</label>
+      <select id="dept_filter" name="dept_filter">
+        <option value="All">All Departments</option>
+        {% for d in departments %}
+        <option value="{{ d }}" {{ 'selected' if dept_filter == d else '' }}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 130px;">
+      <label for="date_start">From Date</label>
+      <input id="date_start" name="date_start" type="date" value="{{ date_start }}">
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 130px;">
+      <label for="date_end">To Date</label>
+      <input id="date_end" name="date_end" type="date" value="{{ date_end }}">
     </div>
     <button class="btn btn-primary" type="submit">Filter</button>
     <a href="/admin/transactions" class="btn btn-secondary">Clear</a>
@@ -51,9 +64,8 @@
       <thead>
         <tr>
           <th>TX ID</th>
-          <th>Date & Time</th>
-          <th>Op Date</th>
-          <th>Shift</th>
+          <th>Exact Date & Time</th>
+          <th>Calendar Date</th>
           <th>Action</th>
           <th>Device Serial</th>
           <th>Employee ID</th>
@@ -71,8 +83,7 @@
           <td class="mono" style="font-size: 0.8rem; white-space: nowrap;">
             {{ t.transaction_time|datetime12 }}
           </td>
-          <td class="mono" style="font-size: 0.8rem;">{{ t.operational_date }}</td>
-          <td><span class="shift-tag">{{ t.shift_name }}</span></td>
+          <td class="mono" style="font-size: 0.8rem;">{{ t.transaction_date }}</td>
           <td>
             <span class="badge {{ 'badge-issued' if t.transaction_type == 'Issue' else 'badge-available' }}">
               {{ t.transaction_type }}
@@ -81,8 +92,8 @@
           <td class="mono"><b>{{ t.serial }}</b></td>
           <td class="mono">{{ t.employee_id }}</td>
           <td>{{ t.employee_name }}</td>
-          <td>{{ t.department }}</td>
-          <td>{{ t.operator_name }}</td>
+          <td><span class="badge badge-secondary">{{ t.department }}</span></td>
+          <td><b>{{ t.operator_name }}</b></td>
           <td>
             {% if t.condition == 'Working' %}
             <span class="text-muted">Working</span>
@@ -94,7 +105,7 @@
         </tr>
         {% else %}
         <tr>
-          <td colspan="12" class="text-muted">No transactions found matching your criteria.</td>
+          <td colspan="11" class="text-muted" style="text-align: center; padding: 2rem;">No transactions found matching your criteria.</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -102,4 +113,3 @@
   </div>
 </div>
 {% endblock %}
-

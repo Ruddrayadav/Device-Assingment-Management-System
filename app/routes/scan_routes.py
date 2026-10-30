@@ -12,7 +12,6 @@ from app.scan_engine import (
     process_scan_pipeline, return_device_atomic, issue_device_atomic,
     sanitize_code, ScanException
 )
-from app.shifts import get_current_shift_and_op_date
 from app.timefmt import fmt_time, fmt_datetime
 
 router = APIRouter(prefix="/api")
@@ -25,8 +24,8 @@ def get_board_version(db: Session) -> str:
     last_tx_id = db.query(func.coalesce(func.max(Transaction.id), 0)).scalar() or 0
     device_count = db.query(func.count(Device.serial)).scalar() or 0
     open_issues = db.query(func.count(DamageReport.id)).filter(DamageReport.review_status == "Open").scalar() or 0
-    max_updated = db.query(func.coalesce(func.max(Device.updated_at), "")).scalar() or ""
-    max_updated_str = max_updated.isoformat() if hasattr(max_updated, "isoformat") else str(max_updated)
+    max_updated = db.query(func.max(Device.updated_at)).scalar()
+    max_updated_str = max_updated.isoformat() if max_updated else ""
     return f"{last_tx_id}|{device_count}|{open_issues}|{max_updated_str}|{today_str}"
 
 def get_live_board_data(db: Session) -> Dict[str, Any]:
@@ -57,6 +56,7 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
             "serial": d.serial,
             "make": d.make,
             "model": d.model,
+            "department": getattr(d, "department", "GENERAL"),
             "status": d.status,
             "condition": d.condition,
             "eid": emp.employee_id if emp else "",
@@ -92,8 +92,7 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
         "name": t.employee_name,
         "dept": t.department,
         "cond": t.condition,
-        "by": t.operator_name,
-        "shift": t.shift_name
+        "by": t.operator_name
     } for t in recent_txs]
 
     open_issues = db.query(func.count(DamageReport.id)).filter(DamageReport.review_status == "Open").scalar() or 0
@@ -142,39 +141,34 @@ async def handle_scan(
     user: User = Depends(require_user),
     db: Session = Depends(get_db)
 ):
-    # Always active_shift=None so shift comes from server clock
     result = process_scan_pipeline(
         db=db,
         code=payload.code,
         mode=payload.mode,
         pending=payload.pending,
         operator=user,
-        active_shift=None,
         idempotency_key=payload.idempotency_key
     )
 
-    # Include live board data and shift stats
+    # Include live board data and operator stats
     board_data = get_live_board_data(db)
     result["board"] = board_data
 
-    # Current operator shift stats from clock
-    cur_shift, op_date = get_current_shift_and_op_date()
+    # Current operator daily stats
+    today_str = date.today().isoformat()
     op_issued = db.query(Transaction).filter(
         Transaction.operator_id == user.id,
-        Transaction.operational_date == op_date,
-        Transaction.shift_name == cur_shift,
+        Transaction.transaction_date == today_str,
         Transaction.transaction_type == "Issue"
     ).count()
     op_returned = db.query(Transaction).filter(
         Transaction.operator_id == user.id,
-        Transaction.operational_date == op_date,
-        Transaction.shift_name == cur_shift,
+        Transaction.transaction_date == today_str,
         Transaction.transaction_type == "Return"
     ).count()
 
     result["operator_stats"] = {
         "operator_name": user.full_name or user.username,
-        "shift": cur_shift,
         "issued_count": op_issued,
         "returned_count": op_returned,
         "total_transactions": op_issued + op_returned
@@ -203,7 +197,6 @@ async def handle_detailed_return(
             condition=payload.condition,
             damage_type=payload.damage_type,
             remarks=payload.remarks or "",
-            active_shift=None,
             idempotency_key=payload.idempotency_key
         )
         return {
@@ -248,16 +241,15 @@ async def handle_damage_report(
         emp = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
 
     now = datetime.now()
-    shift_name, op_date = get_current_shift_and_op_date(now)
+    date_str = now.strftime("%Y-%m-%d")
 
     dmg = DamageReport(
         report_time=now,
-        operational_date=op_date,
-        shift_name=shift_name,
+        report_date=date_str,
         serial=dev.serial,
         employee_id=emp.employee_id if emp else None,
         employee_name=emp.name if emp else "",
-        department=emp.department if emp else "",
+        department=emp.department if emp else getattr(dev, "department", "GENERAL"),
         fault_type=payload.fault_type,
         details=payload.details or "Direct damage report",
         reported_by_id=user.id,
@@ -297,6 +289,7 @@ class QuickAddDevicePayload(BaseModel):
     serial: str
     make: str = "CHAINWAY"
     model: str = "HHD"
+    department: str = "GENERAL"
     cover_qty: int = 0
 
 @router.post("/device/quick-add")
@@ -317,6 +310,7 @@ async def quick_add_device(
         serial=serial_clean,
         make=payload.make,
         model=payload.model,
+        department=payload.department or "GENERAL",
         cover_qty=payload.cover_qty,
         status="Available",
         condition="Working",

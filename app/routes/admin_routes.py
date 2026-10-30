@@ -13,10 +13,10 @@ import openpyxl
 from app.database import get_db
 from app.models import (
     User, Device, Employee, Transaction, DamageReport,
-    DeviceAssignment, ShiftLog, AuditLog
+    DeviceAssignment, AuditLog
 )
-from app.auth import require_admin, hash_password
-from app.shifts import calculate_shift_reconciliation, get_current_shift_and_op_date
+from app.auth import require_admin, hash_password, verify_password
+from app.backup import create_safe_backup
 from app.config import DAMAGE_CATEGORIES, DEVICE_STATUSES
 from app.timefmt import fmt_datetime
 
@@ -26,15 +26,22 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 router = APIRouter(prefix="/admin")
 
 # -------------------------------------------------------------
-# 1. ADMIN DASHBOARD
+# 1. ADMIN DASHBOARD - 24/7 OPERATIONAL CENTER
 # -------------------------------------------------------------
 @router.get("", response_class=HTMLResponse)
 @router.get("/", response_class=HTMLResponse)
 async def admin_dashboard(
     request: Request,
+    start_date: Optional[str] = "",
+    end_date: Optional[str] = "",
+    operator_filter: Optional[str] = "",
+    dept_filter: Optional[str] = "",
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
+    today_str = date.today().isoformat()
+
+    # Core Device KPIs
     total_devices = db.query(Device).count()
     available_devices = db.query(Device).filter(Device.status == "Available").count()
     issued_devices = db.query(Device).filter(Device.status == "Issued").count()
@@ -42,19 +49,44 @@ async def admin_dashboard(
     missing_devices = db.query(Device).filter(Device.status == "Missing").count()
     repair_devices = db.query(Device).filter(Device.status == "Under Repair").count()
 
+    # Core Employee & Operator KPIs
     total_employees = db.query(Employee).count()
     active_employees = db.query(Employee).filter(Employee.active == True).count()
     total_operators = db.query(User).filter(User.role == "operator").count()
 
-    # Current shift reconciliation
-    cur_shift, cur_opdate = get_current_shift_and_op_date()
-    reconciliation = calculate_shift_reconciliation(db, cur_opdate, cur_shift)
+    # Today's Activity (Calendar date)
+    today_issues = db.query(Transaction).filter(
+        Transaction.transaction_date == today_str,
+        Transaction.transaction_type == "Issue"
+    ).count()
+    today_returns = db.query(Transaction).filter(
+        Transaction.transaction_date == today_str,
+        Transaction.transaction_type == "Return"
+    ).count()
 
-    # Recent transactions
-    recent_txs = db.query(Transaction).order_by(Transaction.id.desc()).limit(10).all()
+    # Outstanding & Open Damage
+    outstanding_count = db.query(DeviceAssignment).filter(DeviceAssignment.status == "ACTIVE").count()
+    open_damage_count = db.query(DamageReport).filter(DamageReport.review_status == "Open").count()
+
+    # Filtered Transactions Query for Activity Table
+    tx_query = db.query(Transaction)
+    if start_date:
+        tx_query = tx_query.filter(Transaction.transaction_date >= start_date)
+    if end_date:
+        tx_query = tx_query.filter(Transaction.transaction_date <= end_date)
+    if operator_filter and operator_filter != "All":
+        tx_query = tx_query.filter(Transaction.operator_name == operator_filter)
+    if dept_filter and dept_filter != "All":
+        tx_query = tx_query.filter(Transaction.department == dept_filter)
+
+    recent_txs = tx_query.order_by(Transaction.id.desc()).limit(15).all()
 
     # Open damage reports
     open_damage = db.query(DamageReport).filter(DamageReport.review_status == "Open").order_by(DamageReport.id.desc()).limit(5).all()
+
+    # Filter Dropdown Options
+    all_operators = [u[0] for u in db.query(User.full_name).filter(User.full_name != "").distinct().all() if u[0]]
+    all_depts = [d[0] for d in db.query(Device.department).distinct().all() if d[0]]
 
     return templates.TemplateResponse(request=request, name="admin/dashboard.html", context={
         "title": "Admin Dashboard - HHD Management",
@@ -68,13 +100,21 @@ async def admin_dashboard(
             "repair_devices": repair_devices,
             "total_employees": total_employees,
             "active_employees": active_employees,
-            "total_operators": total_operators
+            "total_operators": total_operators,
+            "today_issues": today_issues,
+            "today_returns": today_returns,
+            "outstanding_count": outstanding_count,
+            "open_damage_count": open_damage_count
         },
-        "cur_shift": cur_shift,
-        "cur_opdate": cur_opdate,
-        "reconciliation": reconciliation,
+        "today_str": today_str,
         "recent_txs": recent_txs,
-        "open_damage": open_damage
+        "open_damage": open_damage,
+        "operators": all_operators,
+        "departments": all_depts,
+        "start_date": start_date,
+        "end_date": end_date,
+        "operator_filter": operator_filter,
+        "dept_filter": dept_filter
     })
 
 # -------------------------------------------------------------
@@ -85,6 +125,7 @@ async def admin_devices(
     request: Request,
     q: Optional[str] = "",
     status_filter: Optional[str] = "",
+    dept_filter: Optional[str] = "",
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
@@ -96,39 +137,47 @@ async def admin_devices(
                 Device.serial.ilike(q_clean),
                 Device.make.ilike(q_clean),
                 Device.model.ilike(q_clean),
+                Device.department.ilike(q_clean),
                 Device.notes.ilike(q_clean)
             )
         )
     if status_filter and status_filter != "All":
         query = query.filter(Device.status == status_filter)
+    if dept_filter and dept_filter != "All":
+        query = query.filter(Device.department == dept_filter)
 
-    devices = query.order_by(Device.serial.asc()).limit(1500).all()
+    devices = query.order_by(Device.serial.asc()).limit(2000).all()
 
-    # Attach employee info
     device_rows = []
+    emp_map = {e.employee_id: e.name for e in db.query(Employee).all()}
     for d in devices:
-        emp = db.query(Employee).filter(Employee.employee_id == d.assigned_employee_id).first() if d.assigned_employee_id else None
+        holder_name = emp_map.get(d.assigned_employee_id, "") if d.assigned_employee_id else ""
         device_rows.append({
             "serial": d.serial,
             "make": d.make,
             "model": d.model,
+            "department": getattr(d, "department", "GENERAL"),
+            "inventory_date": getattr(d, "inventory_date", "") or "",
             "cover_qty": d.cover_qty,
             "status": d.status,
             "condition": d.condition,
             "notes": d.notes,
             "assigned_employee_id": d.assigned_employee_id,
-            "employee_name": emp.name if emp else "",
-            "department": emp.department if emp else "",
+            "employee_name": holder_name,
             "updated_at": fmt_datetime(d.updated_at)
         })
 
+    all_depts = [d[0] for d in db.query(Device.department).distinct().all() if d[0]]
+
     return templates.TemplateResponse(request=request, name="admin/devices.html", context={
-        "title": "Device Inventory - Admin",
+        "title": "Device Fleet Master - Admin",
         "user": admin,
         "devices": device_rows,
+        "statuses": DEVICE_STATUSES,
+        "departments": all_depts,
         "q": q,
         "status_filter": status_filter,
-        "device_statuses": DEVICE_STATUSES
+        "dept_filter": dept_filter
     })
 
 @router.post("/devices")
@@ -137,146 +186,54 @@ async def save_device(
     serial: str = Form(...),
     make: str = Form("CHAINWAY"),
     model: str = Form("HHD"),
-    cover_qty: int = Form(0),
+    department: str = Form("GENERAL"),
     status: str = Form("Available"),
     condition: str = Form("Working"),
-    notes: str = Form(""),
+    cover_qty: int = Form(0),
+    inventory_date: Optional[str] = Form(""),
+    notes: Optional[str] = Form(""),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
     serial_clean = serial.strip()
     if not serial_clean:
-        return RedirectResponse("/admin/devices?error=Serial+is+required", status_code=302)
+        return RedirectResponse("/admin/devices?error=Serial+number+is+required", status_code=302)
 
     dev = db.query(Device).filter(Device.serial == serial_clean).first()
     now = datetime.now()
+
     if dev:
+        # Update existing
         dev.make = make.strip()
         dev.model = model.strip()
-        dev.cover_qty = max(0, cover_qty)
+        dev.department = department.strip() or "GENERAL"
+        if inventory_date:
+            dev.inventory_date = inventory_date.strip()
+        dev.cover_qty = cover_qty
         if dev.status != "Issued":
             dev.status = status
             dev.condition = condition
-        dev.notes = notes.strip()
+        dev.notes = notes.strip() if notes else ""
         dev.updated_at = now
     else:
+        # Create new
         dev = Device(
             serial=serial_clean,
             make=make.strip(),
             model=model.strip(),
-            cover_qty=max(0, cover_qty),
+            department=department.strip() or "GENERAL",
+            inventory_date=inventory_date.strip() if inventory_date else date.today().isoformat(),
+            cover_qty=cover_qty,
             status=status,
             condition=condition,
-            notes=notes.strip(),
+            notes=notes.strip() if notes else "Added via Admin UI",
             created_at=now,
             updated_at=now
         )
         db.add(dev)
 
     db.commit()
-    return RedirectResponse("/admin/devices?msg=Device+saved+successfully", status_code=302)
-
-@router.post("/devices/import")
-async def import_devices(
-    request: Request,
-    file: UploadFile = File(...),
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    contents = await file.read()
-    now = datetime.now()
-    imported_count = 0
-
-    try:
-        if file.filename.endswith(('.xlsx', '.xls')):
-            wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
-            sheet = wb.active
-            rows = list(sheet.iter_rows(values_only=True))
-            if len(rows) > 1:
-                # Find column indexes
-                headers = [str(h or "").strip().lower() for h in rows[0]]
-                s_idx = next((i for i, h in enumerate(headers) if "serial" in h), 0)
-                make_idx = next((i for i, h in enumerate(headers) if "make" in h), None)
-                model_idx = next((i for i, h in enumerate(headers) if "model" in h), None)
-                cover_idx = next((i for i, h in enumerate(headers) if "cover" in h), None)
-                notes_idx = next((i for i, h in enumerate(headers) if "remark" in h or "note" in h), None)
-
-                for r in rows[1:]:
-                    if not r or len(r) <= s_idx or not r[s_idx]:
-                        continue
-                    serial = str(r[s_idx]).strip()
-                    if not serial:
-                        continue
-                    make = str(r[make_idx]).strip() if (make_idx is not None and r[make_idx]) else "CHAINWAY"
-                    model = str(r[model_idx]).strip() if (model_idx is not None and r[model_idx]) else "HHD"
-                    try:
-                        covers = int(r[cover_idx]) if (cover_idx is not None and r[cover_idx]) else 0
-                    except (ValueError, TypeError):
-                        covers = 0
-                    notes = str(r[notes_idx]).strip() if (notes_idx is not None and r[notes_idx]) else ""
-
-                    dev = db.query(Device).filter(Device.serial == serial).first()
-                    if dev:
-                        dev.make = make
-                        dev.model = model
-                        dev.cover_qty = covers
-                        dev.notes = notes
-                        dev.updated_at = now
-                    else:
-                        dev = Device(
-                            serial=serial,
-                            make=make,
-                            model=model,
-                            cover_qty=covers,
-                            status="Available",
-                            condition="Working",
-                            notes=notes,
-                            created_at=now,
-                            updated_at=now
-                        )
-                        db.add(dev)
-                    imported_count += 1
-        else:
-            # CSV import
-            text = contents.decode("utf-8-sig", errors="replace")
-            reader = csv.reader(io.StringIO(text))
-            rows = list(reader)
-            if len(rows) > 1:
-                headers = [h.strip().lower() for h in rows[0]]
-                s_idx = next((i for i, h in enumerate(headers) if "serial" in h), 0)
-                make_idx = next((i for i, h in enumerate(headers) if "make" in h), None)
-                model_idx = next((i for i, h in enumerate(headers) if "model" in h), None)
-
-                for r in rows[1:]:
-                    if not r or len(r) <= s_idx or not r[s_idx].strip():
-                        continue
-                    serial = r[s_idx].strip()
-                    make = r[make_idx].strip() if (make_idx is not None and len(r) > make_idx) else "CHAINWAY"
-                    model = r[model_idx].strip() if (model_idx is not None and len(r) > model_idx) else "HHD"
-
-                    dev = db.query(Device).filter(Device.serial == serial).first()
-                    if dev:
-                        dev.make = make
-                        dev.model = model
-                        dev.updated_at = now
-                    else:
-                        dev = Device(
-                            serial=serial,
-                            make=make,
-                            model=model,
-                            status="Available",
-                            condition="Working",
-                            created_at=now,
-                            updated_at=now
-                        )
-                        db.add(dev)
-                    imported_count += 1
-
-        db.commit()
-        return RedirectResponse(f"/admin/devices?msg=Imported+{imported_count}+devices+successfully", status_code=302)
-    except Exception as ex:
-        db.rollback()
-        return RedirectResponse(f"/admin/devices?error=Import+failed:+{str(ex)[:80]}", status_code=302)
+    return RedirectResponse(f"/admin/devices?msg=Device+{serial_clean}+saved+successfully", status_code=302)
 
 # -------------------------------------------------------------
 # 3. EMPLOYEE MASTER MANAGEMENT
@@ -286,6 +243,7 @@ async def admin_employees(
     request: Request,
     q: Optional[str] = "",
     status_filter: Optional[str] = "",
+    dept_filter: Optional[str] = "",
     add_prefill: Optional[str] = "",
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
@@ -304,6 +262,8 @@ async def admin_employees(
         query = query.filter(Employee.active == True)
     elif status_filter == "Inactive":
         query = query.filter(Employee.active == False)
+    if dept_filter and dept_filter != "All":
+        query = query.filter(Employee.department == dept_filter)
 
     employees = query.order_by(Employee.name.asc()).limit(2000).all()
 
@@ -320,12 +280,16 @@ async def admin_employees(
             "updated_at": fmt_datetime(e.updated_at)
         })
 
+    all_depts = [d[0] for d in db.query(Employee.department).distinct().all() if d[0]]
+
     return templates.TemplateResponse(request=request, name="admin/employees.html", context={
         "title": "Employee Master - Admin",
         "user": admin,
         "employees": emp_rows,
         "q": q,
         "status_filter": status_filter,
+        "dept_filter": dept_filter,
+        "departments": all_depts,
         "prefill": add_prefill
     })
 
@@ -335,6 +299,7 @@ async def save_employee(
     employee_id: str = Form(...),
     name: str = Form(...),
     department: str = Form(...),
+    active: bool = Form(True),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
@@ -349,140 +314,34 @@ async def save_employee(
     if emp:
         emp.name = ename
         emp.department = edept
-        emp.active = True
+        emp.active = active
         emp.updated_at = now
     else:
         emp = Employee(
             employee_id=eid,
             name=ename,
             department=edept,
-            active=True,
+            active=active,
             created_at=now,
             updated_at=now
         )
         db.add(emp)
 
     db.commit()
-    return RedirectResponse("/admin/employees?msg=Employee+saved+successfully", status_code=302)
-
-@router.post("/employees/{eid}/toggle")
-async def toggle_employee_status(
-    eid: str,
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    emp = db.query(Employee).filter(Employee.employee_id == eid).first()
-    if not emp:
-        return RedirectResponse("/admin/employees?error=Employee+not+found", status_code=302)
-
-    if emp.active:
-        # Check if worker holds any devices
-        held = db.query(Device).filter(Device.assigned_employee_id == emp.employee_id, Device.status == "Issued").first()
-        if held:
-            return RedirectResponse(f"/admin/employees?error=Cannot+deactivate+{emp.name}.+Device+{held.serial}+is+still+with+them.+Return+it+first.", status_code=302)
-        emp.active = False
-    else:
-        emp.active = True
-
-    emp.updated_at = datetime.now()
-    db.commit()
-    return RedirectResponse("/admin/employees?msg=Employee+status+updated", status_code=302)
-
-@router.post("/employees/import")
-async def import_employees(
-    request: Request,
-    file: UploadFile = File(...),
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    contents = await file.read()
-    now = datetime.now()
-    count = 0
-
-    try:
-        if file.filename.endswith(('.xlsx', '.xls')):
-            wb = openpyxl.load_workbook(io.BytesIO(contents), data_only=True)
-            sheet = wb.active
-            rows = list(sheet.iter_rows(values_only=True))
-            if len(rows) > 1:
-                headers = [str(h or "").strip().lower() for h in rows[0]]
-                id_idx = next((i for i, h in enumerate(headers) if "id" in h or "code" in h), 0)
-                name_idx = next((i for i, h in enumerate(headers) if "name" in h), 1)
-                dept_idx = next((i for i, h in enumerate(headers) if "dept" in h or "department" in h), 2)
-
-                for r in rows[1:]:
-                    if not r or len(r) <= id_idx or not r[id_idx]:
-                        continue
-                    eid = str(r[id_idx]).strip()
-                    ename = str(r[name_idx]).strip() if len(r) > name_idx and r[name_idx] else "Worker"
-                    edept = str(r[dept_idx]).strip() if len(r) > dept_idx and r[dept_idx] else "General"
-
-                    emp = db.query(Employee).filter(Employee.employee_id == eid).first()
-                    if emp:
-                        emp.name = ename
-                        emp.department = edept
-                        emp.updated_at = now
-                    else:
-                        emp = Employee(
-                            employee_id=eid,
-                            name=ename,
-                            department=edept,
-                            active=True,
-                            created_at=now,
-                            updated_at=now
-                        )
-                        db.add(emp)
-                    count += 1
-        else:
-            text = contents.decode("utf-8-sig", errors="replace")
-            reader = csv.reader(io.StringIO(text))
-            rows = list(reader)
-            if len(rows) > 1:
-                headers = [h.strip().lower() for h in rows[0]]
-                id_idx = next((i for i, h in enumerate(headers) if "id" in h or "code" in h), 0)
-                name_idx = next((i for i, h in enumerate(headers) if "name" in h), 1)
-                dept_idx = next((i for i, h in enumerate(headers) if "dept" in h or "department" in h), 2)
-
-                for r in rows[1:]:
-                    if not r or len(r) <= id_idx or not r[id_idx].strip():
-                        continue
-                    eid = r[id_idx].strip()
-                    ename = r[name_idx].strip() if len(r) > name_idx and r[name_idx].strip() else "Worker"
-                    edept = r[dept_idx].strip() if len(r) > dept_idx and r[dept_idx].strip() else "General"
-
-                    emp = db.query(Employee).filter(Employee.employee_id == eid).first()
-                    if emp:
-                        emp.name = ename
-                        emp.department = edept
-                        emp.updated_at = now
-                    else:
-                        emp = Employee(
-                            employee_id=eid,
-                            name=ename,
-                            department=edept,
-                            active=True,
-                            created_at=now,
-                            updated_at=now
-                        )
-                        db.add(emp)
-                    count += 1
-
-        db.commit()
-        return RedirectResponse(f"/admin/employees?msg=Imported+{count}+employees+successfully", status_code=302)
-    except Exception as ex:
-        db.rollback()
-        return RedirectResponse(f"/admin/employees?error=Import+failed:+{str(ex)[:80]}", status_code=302)
+    return RedirectResponse(f"/admin/employees?msg=Employee+{eid}+saved+successfully", status_code=302)
 
 # -------------------------------------------------------------
-# 4. FULL TRANSACTION AUDIT
+# 4. TRANSACTION AUDIT LOG - CONTINUOUS 24/7
 # -------------------------------------------------------------
 @router.get("/transactions", response_class=HTMLResponse)
 async def admin_transactions(
     request: Request,
     q: Optional[str] = "",
     type_filter: Optional[str] = "",
-    shift_filter: Optional[str] = "",
-    date_filter: Optional[str] = "",
+    operator_filter: Optional[str] = "",
+    dept_filter: Optional[str] = "",
+    date_start: Optional[str] = "",
+    date_end: Optional[str] = "",
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
@@ -501,12 +360,19 @@ async def admin_transactions(
         )
     if type_filter and type_filter != "All":
         query = query.filter(Transaction.transaction_type == type_filter)
-    if shift_filter and shift_filter != "All":
-        query = query.filter(Transaction.shift_name == shift_filter)
-    if date_filter:
-        query = query.filter(Transaction.operational_date == date_filter)
+    if operator_filter and operator_filter != "All":
+        query = query.filter(Transaction.operator_name == operator_filter)
+    if dept_filter and dept_filter != "All":
+        query = query.filter(Transaction.department == dept_filter)
+    if date_start:
+        query = query.filter(Transaction.transaction_date >= date_start)
+    if date_end:
+        query = query.filter(Transaction.transaction_date <= date_end)
 
     txs = query.order_by(Transaction.id.desc()).limit(2500).all()
+
+    all_operators = [u[0] for u in db.query(Transaction.operator_name).distinct().all() if u[0]]
+    all_depts = [d[0] for d in db.query(Transaction.department).distinct().all() if d[0]]
 
     return templates.TemplateResponse(request=request, name="admin/transactions.html", context={
         "title": "Transaction Audit - Admin",
@@ -514,8 +380,12 @@ async def admin_transactions(
         "transactions": txs,
         "q": q,
         "type_filter": type_filter,
-        "shift_filter": shift_filter,
-        "date_filter": date_filter
+        "operator_filter": operator_filter,
+        "dept_filter": dept_filter,
+        "date_start": date_start,
+        "date_end": date_end,
+        "operators": all_operators,
+        "departments": all_depts
     })
 
 # -------------------------------------------------------------
@@ -564,7 +434,6 @@ async def update_damage_status(
         report.resolved_by = admin.full_name or admin.username
         report.resolved_at = now
 
-        # Check if there are other open damage records for this device
         other_open = db.query(DamageReport).filter(
             DamageReport.serial == report.serial,
             DamageReport.id != report.id,
@@ -587,89 +456,7 @@ async def update_damage_status(
     return RedirectResponse("/admin/damage?msg=Damage+report+updated+successfully", status_code=302)
 
 # -------------------------------------------------------------
-# 6. SHIFTS & RECONCILIATION DASHBOARD
-# -------------------------------------------------------------
-@router.get("/shifts", response_class=HTMLResponse)
-async def admin_shifts(
-    request: Request,
-    op_date: Optional[str] = "",
-    shift_name: Optional[str] = "",
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    cur_shift, cur_date = get_current_shift_and_op_date()
-    target_date = op_date.strip() if op_date else cur_date
-    target_shift = shift_name.strip() if shift_name else cur_shift
-
-    reconciliation = calculate_shift_reconciliation(db, target_date, target_shift)
-
-    # Shift history
-    shift_logs = db.query(ShiftLog).order_by(ShiftLog.id.desc()).limit(30).all()
-
-    return templates.TemplateResponse(request=request, name="admin/shifts.html", context={
-        "title": "Shift Reconciliation - Admin",
-        "user": admin,
-        "cur_shift": cur_shift,
-        "cur_date": cur_date,
-        "target_date": target_date,
-        "target_shift": target_shift,
-        "reconciliation": reconciliation,
-        "shift_logs": shift_logs
-    })
-
-@router.post("/shifts/close")
-async def close_shift(
-    request: Request,
-    operational_date: str = Form(...),
-    shift_name: str = Form(...),
-    notes: str = Form(""),
-    admin: User = Depends(require_admin),
-    db: Session = Depends(get_db)
-):
-    reconciliation = calculate_shift_reconciliation(db, operational_date, shift_name)
-    now = datetime.now()
-
-    shift_log = db.query(ShiftLog).filter(
-        ShiftLog.operational_date == operational_date,
-        ShiftLog.shift_name == shift_name
-    ).first()
-
-    if not shift_log:
-        shift_log = ShiftLog(
-            operational_date=operational_date,
-            shift_name=shift_name,
-            opened_at=now,
-            status="CLOSED",
-            closed_at=now,
-            closed_by_user_id=admin.id,
-            closed_by_name=admin.full_name or admin.username,
-            total_issued=reconciliation["total_issued"],
-            total_returned=reconciliation["total_returned"],
-            total_working=reconciliation["working_returned"],
-            total_damaged=reconciliation["damaged_returned"],
-            total_missing=reconciliation["missing_returned"],
-            total_outstanding=reconciliation["outstanding_count"],
-            notes=notes.strip()
-        )
-        db.add(shift_log)
-    else:
-        shift_log.status = "CLOSED"
-        shift_log.closed_at = now
-        shift_log.closed_by_user_id = admin.id
-        shift_log.closed_by_name = admin.full_name or admin.username
-        shift_log.total_issued = reconciliation["total_issued"]
-        shift_log.total_returned = reconciliation["total_returned"]
-        shift_log.total_working = reconciliation["working_returned"]
-        shift_log.total_damaged = reconciliation["damaged_returned"]
-        shift_log.total_missing = reconciliation["missing_returned"]
-        shift_log.total_outstanding = reconciliation["outstanding_count"]
-        shift_log.notes = notes.strip()
-
-    db.commit()
-    return RedirectResponse(f"/admin/shifts?op_date={operational_date}&shift_name={shift_name}&msg=Shift+closed+and+reconciled+successfully", status_code=302)
-
-# -------------------------------------------------------------
-# 7. USER MANAGEMENT
+# 6. USER MANAGEMENT (OPERATORS & ADMINS)
 # -------------------------------------------------------------
 @router.get("/users", response_class=HTMLResponse)
 async def admin_users(
@@ -679,7 +466,7 @@ async def admin_users(
 ):
     users = db.query(User).order_by(User.role.asc(), User.username.asc()).all()
     return templates.TemplateResponse(request=request, name="admin/users.html", context={
-        "title": "User Accounts - Admin",
+        "title": "User Accounts & Operators - Admin",
         "user": admin,
         "users": users
     })
@@ -695,8 +482,8 @@ async def create_user(
     db: Session = Depends(get_db)
 ):
     uname = username.strip()
-    if not uname or len(password) < 8 or role not in ("admin", "operator"):
-        return RedirectResponse("/admin/users?error=Username+and+minimum+8+char+password+required", status_code=302)
+    if not uname or len(password) < 6 or role not in ("admin", "operator"):
+        return RedirectResponse("/admin/users?error=Username+and+minimum+6+char+password+required", status_code=302)
 
     existing = db.query(User).filter(User.username == uname).first()
     if existing:
@@ -708,7 +495,6 @@ async def create_user(
         password_hash=hash_password(password),
         full_name=full_name.strip() or uname,
         role=role,
-        default_shift="Morning",
         active=True,
         created_at=now,
         updated_at=now
@@ -734,3 +520,76 @@ async def toggle_user_active(
         db.commit()
 
     return RedirectResponse("/admin/users?msg=User+status+updated", status_code=302)
+
+# -------------------------------------------------------------
+# 7. CONTROLLED INITIAL DATA RESET (DEMO DATA CLEANUP)
+# -------------------------------------------------------------
+@router.get("/reset", response_class=HTMLResponse)
+async def reset_page(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    dev_count = db.query(Device).count()
+    emp_count = db.query(Employee).count()
+    tx_count = db.query(Transaction).count()
+    asgn_count = db.query(DeviceAssignment).count()
+    dmg_count = db.query(DamageReport).count()
+
+    return templates.TemplateResponse(request=request, name="admin/reset.html", context={
+        "title": "Controlled Initial Data Reset - Admin",
+        "user": admin,
+        "counts": {
+            "devices": dev_count,
+            "employees": emp_count,
+            "transactions": tx_count,
+            "assignments": asgn_count,
+            "damage": dmg_count
+        },
+        "msg": request.query_params.get("msg"),
+        "error": request.query_params.get("error")
+    })
+
+@router.post("/reset")
+async def execute_initial_data_reset(
+    request: Request,
+    admin_password: str = Form(...),
+    confirmation_text: str = Form(...),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    # 1. Verify password
+    if not verify_password(admin_password, admin.password_hash):
+        return RedirectResponse("/admin/reset?error=Invalid+admin+password.+Reset+aborted.", status_code=302)
+
+    # 2. Verify confirmation phrase
+    if confirmation_text.strip() != "CONFIRM RESET":
+        return RedirectResponse("/admin/reset?error=Confirmation+text+must+match+'CONFIRM+RESET'+exactly.", status_code=302)
+
+    # 3. Create verified pre-reset database backup
+    backup_res = create_safe_backup("pre_initial_data_reset")
+
+    # 4. Wipe operational demo data
+    db.query(DeviceAssignment).delete()
+    db.query(Transaction).delete()
+    db.query(DamageReport).delete()
+    db.query(Device).delete()
+    db.query(Employee).delete()
+
+    # Log audit entry
+    audit = AuditLog(
+        timestamp=datetime.now(),
+        user_id=admin.id,
+        username=admin.username,
+        action="INITIAL_DATA_RESET",
+        target_type="OPERATIONAL_DATA",
+        target_id="ALL",
+        details=f"Demo operational data cleared after safety backup {backup_res['filename']}."
+    )
+    db.add(audit)
+    db.commit()
+
+    return RedirectResponse(
+        "/admin/import?msg=Demo+data+successfully+reset.+You+can+now+import+your+real+company+Device+and+Employee+Excel+files.",
+        status_code=302
+    )

@@ -29,9 +29,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
-# In-memory thread lock to serialize critical write paths (such as scanning and returning)
+# In-memory thread re-entrant lock to serialize critical write paths (such as scanning and returning)
 # across multiple FastAPI threads, completely preventing SQLite concurrency lock contention.
-SCAN_WRITE_LOCK = threading.Lock()
+SCAN_WRITE_LOCK = threading.RLock()
 
 def get_db() -> Generator[Session, None, None]:
     db = SessionLocal()

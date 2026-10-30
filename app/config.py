@@ -45,12 +45,6 @@ SECRET_KEY = get_secret_key()
 SERVER_HOST = os.environ.get("HHD_HOST", "0.0.0.0")
 SERVER_PORT = int(os.environ.get("HHD_PORT", "8000"))
 
-SHIFT_DEFINITIONS = {
-    "Morning": {"start_hour": 6, "start_min": 0, "end_hour": 14, "end_min": 0},
-    "Evening": {"start_hour": 14, "start_min": 0, "end_hour": 22, "end_min": 0},
-    "Night": {"start_hour": 22, "start_min": 0, "end_hour": 6, "end_min": 0}, # Crosses midnight
-}
-
 DEVICE_STATUSES = [
     "Available",
     "Issued",

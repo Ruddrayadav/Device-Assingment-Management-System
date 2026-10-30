@@ -14,16 +14,12 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from app.database import Base, SCAN_WRITE_LOCK
 from app.models import (
     User, Employee, Device, DeviceAssignment, Transaction,
-    DamageReport, ShiftLog
+    DamageReport
 )
 from app.auth import hash_password, verify_password, sign_session, decode_session
 from app.scan_engine import (
     issue_device_atomic, return_device_atomic, process_scan_pipeline,
     ScanException, resolve_barcode
-)
-from app.shifts import (
-    get_current_shift_and_op_date, get_operational_date_for_shift,
-    calculate_shift_reconciliation
 )
 from app.reports import generate_excel_report
 from app.backup import create_safe_backup, verify_backup_integrity, restore_backup
@@ -49,7 +45,6 @@ class HHDSystemTestSuite(unittest.TestCase):
             password_hash=hash_password("admin_pass_123"),
             full_name="Admin Test",
             role="admin",
-            default_shift="Morning",
             active=True,
             created_at=now,
             updated_at=now
@@ -59,7 +54,6 @@ class HHDSystemTestSuite(unittest.TestCase):
             password_hash=hash_password("op1_pass_123"),
             full_name="Operator One",
             role="operator",
-            default_shift="Morning",
             active=True,
             created_at=now,
             updated_at=now
@@ -69,7 +63,6 @@ class HHDSystemTestSuite(unittest.TestCase):
             password_hash=hash_password("op2_pass_123"),
             full_name="Operator Two",
             role="operator",
-            default_shift="Evening",
             active=True,
             created_at=now,
             updated_at=now
@@ -346,52 +339,35 @@ class HHDSystemTestSuite(unittest.TestCase):
         db1.close()
         db2.close()
 
-    # 7. SHIFT RECONCILIATION & MIDNIGHT CROSSING
-    def test_midnight_crossing_shift_date(self):
-        dt1 = datetime(2026, 10, 30, 23, 30, 0)
-        shift1, op1 = get_current_shift_and_op_date(dt1)
-        self.assertEqual(shift1, "Night")
-        self.assertEqual(op1, "2026-10-30")
-
-        # Past midnight (02:15 on Oct 31) -> Must belong to yesterday's date (2026-10-30)!
-        dt2 = datetime(2026, 10, 31, 2, 15, 0)
-        shift2, op2 = get_current_shift_and_op_date(dt2)
-        self.assertEqual(shift2, "Night")
-        self.assertEqual(op2, "2026-10-30")
-
-        # 08:30 on Oct 31 -> Morning shift on Oct 31
-        dt3 = datetime(2026, 10, 31, 8, 30, 0)
-        shift3, op3 = get_current_shift_and_op_date(dt3)
-        self.assertEqual(shift3, "Morning")
-        self.assertEqual(op3, "2026-10-31")
-
-    def test_shift_reconciliation_math(self):
+    # 7. CONTINUOUS 24/7 OPERATIONS & HANDOVER TRACKING
+    def test_continuous_24_7_operations_and_handover_tracking(self):
         db = TestSession()
         op1 = db.query(User).filter(User.username == "op1_test").first()
-        target_shift = "Morning"
-        target_date = get_operational_date_for_shift(target_shift, datetime.now())
 
-        issue_device_atomic(db, "DEV001", "E101", op1, active_shift=target_shift)
-        issue_device_atomic(db, "DEV002", "E102", op1, active_shift=target_shift)
-        issue_device_atomic(db, "DEV003", "E103", op1, active_shift=target_shift)
+        res1 = issue_device_atomic(db, "DEV001", "E101", op1)
+        self.assertEqual(res1["action"], "Issue")
+        self.assertEqual(res1["operator"], op1.full_name)
 
-        return_device_atomic(db, "DEV001", op1, condition="Working", active_shift=target_shift)
-        return_device_atomic(db, "DEV002", op1, condition="Damaged", damage_type="Blank screen", active_shift=target_shift)
+        issue_device_atomic(db, "DEV002", "E102", op1)
+        issue_device_atomic(db, "DEV003", "E103", op1)
 
-        recon = calculate_shift_reconciliation(db, target_date, target_shift)
-        self.assertEqual(recon["total_issued"], 3)
-        self.assertEqual(recon["total_returned"], 2)
-        self.assertEqual(recon["working_returned"], 1)
-        self.assertEqual(recon["damaged_returned"], 1)
-        self.assertEqual(recon["outstanding_count"], 1)
-        self.assertEqual(recon["discrepancy"], 1)
-        self.assertEqual(len(recon["outstanding_devices"]), 1)
-        self.assertEqual(recon["outstanding_devices"][0]["serial"], "DEV003")
-        self.assertEqual(recon["outstanding_devices"][0]["employee_id"], "E103")
+        res_ret1 = return_device_atomic(db, "DEV001", op1, condition="Working")
+        self.assertEqual(res_ret1["action"], "Return")
+        self.assertEqual(res_ret1["condition"], "Working")
+
+        res_ret2 = return_device_atomic(db, "DEV002", op1, condition="Damaged", damage_type="Blank screen")
+        self.assertEqual(res_ret2["action"], "Return")
+        self.assertEqual(res_ret2["condition"], "Blank screen")
+
+        # Verify active assignments: DEV003 is still outstanding
+        active_asgns = db.query(DeviceAssignment).filter(DeviceAssignment.status == "ACTIVE").all()
+        self.assertEqual(len(active_asgns), 1)
+        self.assertEqual(active_asgns[0].device_serial, "DEV003")
+        self.assertEqual(active_asgns[0].employee_id, "E103")
         db.close()
 
-    # 8. EXCEL REPORT GENERATION (5 SHEETS)
-    def test_excel_5_sheets_export(self):
+    # 8. EXCEL REPORT GENERATION (7 SHEETS)
+    def test_excel_7_sheets_export(self):
         db = TestSession()
         op1 = db.query(User).filter(User.username == "op1_test").first()
         issue_device_atomic(db, "DEV001", "E101", op1)
@@ -402,7 +378,11 @@ class HHDSystemTestSuite(unittest.TestCase):
 
         import openpyxl
         wb = openpyxl.load_workbook(excel_buffer)
-        expected_sheets = ["Daily Summary", "Transaction Details", "Damage Reports", "Outstanding Devices", "Shift Summary"]
+        expected_sheets = [
+            "Overall Summary", "Transaction Details", "Device Inventory",
+            "Employee Master", "Damage and Repair Reports", "Outstanding Devices",
+            "Operator Activity Summary"
+        ]
         self.assertEqual(wb.sheetnames, expected_sheets)
         db.close()
 

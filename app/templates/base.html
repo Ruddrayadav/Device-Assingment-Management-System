@@ -24,10 +24,10 @@
       <a href="/admin" class="{{ 'active' if request.url.path == '/admin' }}">📊 Dashboard</a>
       <a href="/admin/devices" class="{{ 'active' if request.url.path.startswith('/admin/devices') }}">📱 Devices</a>
       <a href="/admin/employees" class="{{ 'active' if request.url.path.startswith('/admin/employees') }}">👷 Employees</a>
-      <a href="/admin/shifts" class="{{ 'active' if request.url.path.startswith('/admin/shifts') }}">🔄 Reconciliation</a>
+      <a href="/admin/import" class="{{ 'active' if request.url.path.startswith('/admin/import') }}">📥 Master Import</a>
       <a href="/admin/transactions" class="{{ 'active' if request.url.path.startswith('/admin/transactions') }}">📜 Audit</a>
       <a href="/admin/damage" class="{{ 'active' if request.url.path.startswith('/admin/damage') }}">⚠️ Damage</a>
-      <a href="/admin/reports" class="{{ 'active' if request.url.path.startswith('/admin/reports') }}">📥 Reports</a>
+      <a href="/admin/reports" class="{{ 'active' if request.url.path.startswith('/admin/reports') }}">📊 Reports</a>
       <a href="/admin/users" class="{{ 'active' if request.url.path.startswith('/admin/users') }}">👥 Users</a>
       <a href="/admin/backups" class="{{ 'active' if request.url.path.startswith('/admin/backups') }}">🗄️ Database Files</a>
       {% endif %}
@@ -35,7 +35,7 @@
 
     <div class="user-info">
       <button class="btn btn-sm btn-secondary" id="sound-toggle" type="button">🔊 Sound On</button>
-      <span class="shift-tag">Shift: {{ current_shift() }}</span>
+      <span class="brand-badge" style="background: rgba(16,185,129,0.15); color: #34d399; border: 1px solid rgba(16,185,129,0.3); font-weight: 700;">24/7 Continuous</span>
       <span><b>{{ user.full_name or user.username }}</b> ({{ user.role }})</span>
       <a href="/logout" class="btn btn-sm btn-secondary">Sign Out</a>
     </div>

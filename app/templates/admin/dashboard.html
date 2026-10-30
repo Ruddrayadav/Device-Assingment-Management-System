@@ -1,14 +1,15 @@
 {% extends "base.html" %}
 
 {% block content %}
-<div class="flex-between" style="margin-bottom: 1.5rem;">
+<div class="flex-between" style="margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
   <div>
-    <h1 style="font-size: 1.85rem; font-weight: 800;">Administrator Operations Center</h1>
-    <div class="text-muted">Active Shift: <b>{{ cur_shift }}</b> · Operational Date: <b>{{ cur_opdate }}</b></div>
+    <h1 style="font-size: 1.85rem; font-weight: 800;">24/7 Warehouse Operations Center</h1>
+    <div class="text-muted">Continuous 24/7 Handover Tracking · Date: <b>{{ today_str }}</b></div>
   </div>
-  <div style="display: flex; gap: 0.5rem;">
-    <a href="/reports/excel" class="btn btn-primary">📥 Download Full Excel Report</a>
-    <a href="/admin/shifts" class="btn btn-secondary">🔄 Shift Reconciliation</a>
+  <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
+    <a href="/reports/excel" class="btn btn-primary">📊 Download 7-Sheet Report</a>
+    <a href="/admin/import" class="btn btn-secondary">📥 Master Excel Import</a>
+    <a href="/admin/reset" class="btn btn-secondary" style="color: #ef4444; border-color: rgba(239,68,68,0.3);">⚠️ Initial Data Reset</a>
   </div>
 </div>
 
@@ -38,47 +39,80 @@
   </div>
 </div>
 
-<!-- Shift Reconciliation Alert Card -->
-<div class="card" style="border-left: 4px solid {{ '#ef4444' if reconciliation.discrepancy > 0 else '#10b981' }};">
-  <div class="card-title">
-    <span>Shift Reconciliation Overview ({{ cur_shift }} Shift · {{ cur_opdate }})</span>
-    <span class="badge {{ 'badge-damaged' if reconciliation.discrepancy > 0 else 'badge-available' }}">
-      {{ reconciliation.discrepancy }} Unreturned Discrepancies
-    </span>
+<!-- 24/7 Operations Activity Card -->
+<div class="card" style="border-left: 4px solid var(--accent-blue); margin-bottom: 1.5rem;">
+  <div class="card-title flex-between">
+    <span>Today's Warehouse Activity ({{ today_str }})</span>
+    <span class="badge badge-available">24/7 Live</span>
   </div>
-  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-top: 0.5rem;">
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 1rem; margin-top: 0.5rem;">
     <div>
-      <div class="text-muted" style="font-size: 0.8rem;">TOTAL ISSUED</div>
-      <div style="font-size: 1.5rem; font-weight: 700;">{{ reconciliation.total_issued }}</div>
+      <div class="text-muted" style="font-size: 0.8rem; text-transform: uppercase;">Today's Issues</div>
+      <div style="font-size: 1.6rem; font-weight: 700; color: #60a5fa;">{{ metrics.today_issues }}</div>
     </div>
     <div>
-      <div class="text-muted" style="font-size: 0.8rem;">TOTAL RETURNED</div>
-      <div style="font-size: 1.5rem; font-weight: 700;">{{ reconciliation.total_returned }}</div>
+      <div class="text-muted" style="font-size: 0.8rem; text-transform: uppercase;">Today's Returns</div>
+      <div style="font-size: 1.6rem; font-weight: 700; color: #34d399;">{{ metrics.today_returns }}</div>
     </div>
     <div>
-      <div class="text-muted" style="font-size: 0.8rem;">WORKING RETURNED</div>
-      <div style="font-size: 1.5rem; font-weight: 700; color: #34d399;">{{ reconciliation.working_returned }}</div>
-    </div>
-    <div>
-      <div class="text-muted" style="font-size: 0.8rem;">DAMAGED RETURNED</div>
-      <div style="font-size: 1.5rem; font-weight: 700; color: #f87171;">{{ reconciliation.damaged_returned }}</div>
-    </div>
-    <div>
-      <div class="text-muted" style="font-size: 0.8rem;">STILL WITH WORKERS</div>
-      <div style="font-size: 1.5rem; font-weight: 700; color: {{ '#f87171' if reconciliation.outstanding_count > 0 else 'inherit' }};">
-        {{ reconciliation.outstanding_count }}
+      <div class="text-muted" style="font-size: 0.8rem; text-transform: uppercase;">Currently With Workers</div>
+      <div style="font-size: 1.6rem; font-weight: 700; color: {{ '#f87171' if metrics.outstanding_count > 0 else '#34d399' }};">
+        {{ metrics.outstanding_count }}
       </div>
     </div>
+    <div>
+      <div class="text-muted" style="font-size: 0.8rem; text-transform: uppercase;">Open Damage Reports</div>
+      <div style="font-size: 1.6rem; font-weight: 700; color: {{ '#f87171' if metrics.open_damage_count > 0 else '#34d399' }};">
+        {{ metrics.open_damage_count }}
+      </div>
+    </div>
+    <div>
+      <div class="text-muted" style="font-size: 0.8rem; text-transform: uppercase;">Active Operators</div>
+      <div style="font-size: 1.6rem; font-weight: 700;">{{ metrics.total_operators }}</div>
+    </div>
   </div>
-  <div class="mt-4">
-    <a href="/admin/shifts" class="btn btn-sm btn-secondary">View Outstanding Devices Breakdown →</a>
-  </div>
+</div>
+
+<!-- Filter Controls for Activity Feed -->
+<div class="card" style="margin-bottom: 1.5rem; padding: 1rem;">
+  <form method="get" action="/admin" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) auto; gap: 0.75rem; align-items: end;">
+    <div class="form-group" style="margin-bottom: 0;">
+      <label style="font-size: 0.8rem;">From Date</label>
+      <input type="date" name="start_date" value="{{ start_date }}" style="padding: 0.4rem; font-size: 0.85rem;">
+    </div>
+    <div class="form-group" style="margin-bottom: 0;">
+      <label style="font-size: 0.8rem;">To Date</label>
+      <input type="date" name="end_date" value="{{ end_date }}" style="padding: 0.4rem; font-size: 0.85rem;">
+    </div>
+    <div class="form-group" style="margin-bottom: 0;">
+      <label style="font-size: 0.8rem;">Filter Operator</label>
+      <select name="operator_filter" style="padding: 0.4rem; font-size: 0.85rem;">
+        <option value="All">All Operators</option>
+        {% for op in operators %}
+        <option value="{{ op }}" {{ 'selected' if operator_filter == op else '' }}>{{ op }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group" style="margin-bottom: 0;">
+      <label style="font-size: 0.8rem;">Filter Department</label>
+      <select name="dept_filter" style="padding: 0.4rem; font-size: 0.85rem;">
+        <option value="All">All Departments</option>
+        {% for d in departments %}
+        <option value="{{ d }}" {{ 'selected' if dept_filter == d else '' }}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div style="display: flex; gap: 0.5rem;">
+      <button class="btn btn-secondary btn-sm" type="submit" style="padding: 0.5rem 1rem;">🔍 Filter</button>
+      <a href="/admin" class="btn btn-sm btn-secondary" style="padding: 0.5rem;">Reset</a>
+    </div>
+  </form>
 </div>
 
 <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
   <!-- Recent Audit Transactions -->
   <div class="card">
-    <div class="card-title">
+    <div class="card-title flex-between">
       <span>Latest Transaction Records</span>
       <a href="/admin/transactions" class="btn btn-sm btn-secondary">Full Audit Trail →</a>
     </div>
@@ -103,46 +137,48 @@
               </span>
             </td>
             <td class="mono"><b>{{ t.serial }}</b></td>
-            <td>{{ t.employee_name }}</td>
-            <td>{{ t.operator_name }}</td>
+            <td>
+              <div><b>{{ t.employee_name }}</b></div>
+              <div class="text-muted" style="font-size: 0.75rem;">{{ t.department }} ({{ t.employee_id }})</div>
+            </td>
+            <td><b>{{ t.operator_name }}</b></td>
           </tr>
           {% else %}
-          <tr><td colspan="5" class="text-muted">No transactions recorded yet.</td></tr>
+          <tr>
+            <td colspan="5" class="text-muted" style="text-align: center; padding: 1.5rem;">No recent transactions match filter.</td>
+          </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
 
-  <!-- Open Damage Queue -->
+  <!-- Open Damage Reports -->
   <div class="card">
-    <div class="card-title">
-      <span>Open Damage Queue</span>
-      <a href="/admin/damage" class="btn btn-sm btn-secondary">Manage →</a>
+    <div class="card-title flex-between">
+      <span>Open Damage Reports</span>
+      <a href="/admin/damage" class="btn btn-sm btn-secondary">All Damage →</a>
     </div>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr>
-            <th>Serial</th>
-            <th>Fault Type</th>
-            <th>Reported By</th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for d in open_damage %}
-          <tr>
-            <td class="mono"><b>{{ d.serial[-6:] }}</b></td>
-            <td><span class="badge badge-damaged">{{ d.fault_type }}</span></td>
-            <td>{{ d.reported_by_name }}</td>
-          </tr>
-          {% else %}
-          <tr><td colspan="3" class="text-muted">Zero open damage reports. Fleet in good condition.</td></tr>
-          {% endfor %}
-        </tbody>
-      </table>
-    </div>
+    {% if open_damage %}
+      {% for d in open_damage %}
+      <div style="border-bottom: 1px solid var(--border); padding: 0.75rem 0;">
+        <div class="flex-between">
+          <span class="mono" style="font-weight: 700;">{{ d.serial }}</span>
+          <span class="badge badge-damaged">{{ d.fault_type }}</span>
+        </div>
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+          Reported by <b>{{ d.reported_by_name }}</b> · {{ d.report_time|time12 }}
+        </div>
+        <div style="font-size: 0.8rem; margin-top: 0.25rem;">
+          {{ d.details or "No additional notes" }}
+        </div>
+      </div>
+      {% endfor %}
+    {% else %}
+      <div class="text-muted" style="text-align: center; padding: 2rem;">
+        ✓ Zero open damage issues.
+      </div>
+    {% endif %}
   </div>
 </div>
 {% endblock %}
-

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800; color: #ef4444;">Controlled Initial Data Reset</h1>
+    <div class="text-muted">Purge demo and sample operational data to prepare the system for actual company Excel master import.</div>
+  </div>
+  <a href="/admin" class="btn btn-secondary">← Back to Dashboard</a>
+</div>
+
+<!-- Affected Records Count Card -->
+<div class="card" style="border-left: 4px solid #ef4444; margin-bottom: 1.5rem;">
+  <div class="card-title flex-between">
+    <span style="color: #ef4444;">Operational Records Scheduled For Deletion</span>
+    <span class="badge badge-damaged">High Impact Action</span>
+  </div>
+  <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1rem;">
+    This feature safely wipes all sample warehouse demo records. A complete database backup is <b>automatically created and verified</b> before any records are cleared.
+  </p>
+  <div class="kpi-grid" style="margin-bottom: 1rem;">
+    <div class="kpi-card">
+      <div class="kpi-label">Sample Devices</div>
+      <div class="kpi-value" style="color: #f87171;">{{ counts.devices }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sample Employees</div>
+      <div class="kpi-value" style="color: #f87171;">{{ counts.employees }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sample Transactions</div>
+      <div class="kpi-value" style="color: #f87171;">{{ counts.transactions }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sample Assignments</div>
+      <div class="kpi-value" style="color: #f87171;">{{ counts.assignments }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Sample Damage Reports</div>
+      <div class="kpi-value" style="color: #f87171;">{{ counts.damage }}</div>
+    </div>
+  </div>
+
+  <div style="background: var(--bg-main); padding: 1rem; border-radius: 6px; font-size: 0.85rem; line-height: 1.6; border: 1px solid var(--border);">
+    <b style="color: #34d399;">✓ What is strictly PRESERVED:</b>
+    <ul style="margin: 0.25rem 0 0 1.25rem; color: var(--text-muted);">
+      <li>Administrator accounts and credentials.</li>
+      <li>System security configuration and secret tokens.</li>
+      <li>Automatic online disaster recovery backups in <code class="mono">backups/</code>.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Confirmation Form -->
+<div class="card" style="max-width: 650px;">
+  <div class="card-title">Admin Password & Confirmation</div>
+  <form method="post" action="/admin/reset">
+    <div class="form-group" style="margin-bottom: 1rem;">
+      <label for="admin_password">Enter Your Administrator Password *</label>
+      <input id="admin_password" name="admin_password" type="password" required placeholder="Administrator password">
+    </div>
+
+    <div class="form-group" style="margin-bottom: 1.25rem;">
+      <label for="confirmation_text">Type <code class="mono" style="color: #ef4444; font-weight: 700;">CONFIRM RESET</code> to confirm *</label>
+      <input id="confirmation_text" name="confirmation_text" required placeholder="CONFIRM RESET" autocomplete="off">
+    </div>
+
+    <div style="display: flex; gap: 1rem;">
+      <button class="btn btn-danger" type="submit" style="padding: 0.65rem 1.75rem;">
+        ⚠️ Wipe Demo Operational Data & Create Safety Backup
+      </button>
+      <a href="/admin" class="btn btn-secondary">Cancel</a>
+    </div>
+  </form>
+</div>
+{% endblock %}

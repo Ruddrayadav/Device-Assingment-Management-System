@@ -3,60 +3,75 @@
 {% block content %}
 <div class="flex-between" style="margin-bottom: 1.5rem;">
   <div>
-    <h1 style="font-size: 1.85rem; font-weight: 800;">Management Reports & Excel Export</h1>
-    <div class="text-muted">Generate comprehensive Excel spreadsheets (.xlsx) and CSV exports directly from live records</div>
+    <h1 style="font-size: 1.85rem; font-weight: 800;">Management Reports & 24/7 Analytics</h1>
+    <div class="text-muted">Generate comprehensive 7-sheet Excel workbooks (.xlsx) and CSV exports directly from live records</div>
   </div>
 </div>
 
-<!-- Excel 5-Sheet Report Builder -->
-<div class="card" style="border: 2px solid var(--primary); padding: 1.5rem;">
+<!-- Excel 7-Sheet Report Builder -->
+<div class="card" style="border: 2px solid var(--primary); padding: 1.5rem; margin-bottom: 1.5rem;">
   <div class="card-title" style="font-size: 1.3rem;">
-    <span>📊 Comprehensive 5-Sheet Excel Workbook (.xlsx)</span>
+    <span>📊 Comprehensive 7-Sheet 24/7 Operational Excel Workbook (.xlsx)</span>
   </div>
   <p class="text-muted" style="margin-bottom: 1.25rem;">
-    Builds a fully formatted, styled Excel workbook formatted for management review and warehouse audit.
+    Builds a fully formatted, multi-tab Excel workbook formatted for management review, warehouse audit, and continuous 24/7 handover reconciliation.
   </p>
 
-  <form method="get" action="/reports/excel" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; align-items: flex-end;">
-    <div class="form-group">
-      <label for="start_date">Start Date</label>
+  <form method="get" action="/reports/excel" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)) auto; gap: 1rem; align-items: flex-end;">
+    <div class="form-group" style="margin-bottom: 0;">
+      <label for="start_date">From Date</label>
       <input id="start_date" name="start_date" type="date">
     </div>
-    <div class="form-group">
-      <label for="end_date">End Date</label>
+    <div class="form-group" style="margin-bottom: 0;">
+      <label for="end_date">To Date</label>
       <input id="end_date" name="end_date" type="date">
     </div>
-    <div class="form-group">
-      <label for="shift_name">Shift Filter</label>
-      <select id="shift_name" name="shift_name">
-        <option value="All">All Shifts</option>
-        <option value="Morning">Morning</option>
-        <option value="Evening">Evening</option>
-        <option value="Night">Night</option>
+    <div class="form-group" style="margin-bottom: 0;">
+      <label for="operator">Operator Name</label>
+      <select id="operator" name="operator">
+        <option value="">All Operators</option>
+        {% for op in operators %}
+        <option value="{{ op }}">{{ op }}</option>
+        {% endfor %}
       </select>
     </div>
-    <button class="btn btn-primary" type="submit" style="padding: 0.65rem 1.25rem; font-size: 1rem;">
+    <div class="form-group" style="margin-bottom: 0;">
+      <label for="department">Department</label>
+      <select id="department" name="department">
+        <option value="">All Departments</option>
+        {% for d in departments %}
+        <option value="{{ d }}">{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit" style="padding: 0.65rem 1.5rem; font-size: 0.95rem;">
       📥 Generate & Download Excel
     </button>
   </form>
 
   <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
-    <div style="font-weight: 600; margin-bottom: 0.5rem;">Sheets Included in Downloaded File:</div>
-    <ul style="padding-left: 1.25rem; font-size: 0.875rem; color: var(--text-muted); line-height: 1.7;">
-      <li><b>Sheet 1: Daily Summary</b> — Issued, Returned, Working, Damaged, Missing, Outstanding per operational date</li>
-      <li><b>Sheet 2: Transaction Details</b> — Timestamp, Shift, Operator, Worker ID/Name, Department, Serial, Action, Remarks</li>
-      <li><b>Sheet 3: Damage Reports</b> — Fault types, employee link, description, reporter, review and repair status</li>
-      <li><b>Sheet 4: Outstanding Devices</b> — Real-time list of all devices currently with workers (unreturned)</li>
-      <li><b>Sheet 5: Shift Summary</b> — Morning, Evening and Night shifts breakdown and unreturned discrepancies</li>
-    </ul>
+    <div style="font-weight: 700; margin-bottom: 0.5rem;">All 7 Sheets Included in the Generated File:</div>
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; font-size: 0.85rem; color: var(--text-muted); line-height: 1.6;">
+      <div>
+        <div><b>1. Overall Summary</b> — KPIs, Fleet in stock, currently issued, damaged, and department breakdown</div>
+        <div><b>2. Transaction Details</b> — Exact timestamps, serial, worker, department, and operator accountability</div>
+        <div><b>3. Device Inventory</b> — Complete fleet list, make, model, department, and inventory audit date</div>
+        <div><b>4. Employee Master</b> — All registered workers, department, status, and held device counts</div>
+      </div>
+      <div>
+        <div><b>5. Damage & Repair Reports</b> — Fault categories, reported by operator, description, and resolution</div>
+        <div><b>6. Outstanding Devices</b> — Live list of all devices currently checked out with workers and held duration</div>
+        <div><b>7. Operator Activity Summary</b> — Individual operator transaction counts, issues, returns, and timestamps</div>
+      </div>
+    </div>
   </div>
 </div>
 
 <!-- Raw CSV Exports -->
-<div class="card mt-4">
+<div class="card">
   <div class="card-title">Quick CSV Exports</div>
   <p class="text-muted" style="margin-bottom: 1rem;">
-    Single table CSV files suitable for external ERP systems, PowerBI, or raw data pipelines:
+    Single table CSV files suitable for external ERP systems, PowerBI, or automated data pipelines:
   </p>
   <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
     <a href="/reports/csv/devices" class="btn btn-secondary">📱 Device Inventory CSV</a>
@@ -66,4 +81,3 @@
   </div>
 </div>
 {% endblock %}
-

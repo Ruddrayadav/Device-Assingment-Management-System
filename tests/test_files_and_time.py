@@ -17,8 +17,8 @@ from app.config import BACKUP_DIR, DB_PATH
 from app.database import engine, Base, SessionLocal
 from app.models import User, Device, Employee, Transaction, DeviceAssignment
 from app.auth import sign_session, decode_session
-from app.shifts import get_current_shift_and_op_date
 from app.timefmt import fmt_time, fmt_datetime
+from app.migration import run_schema_migration
 from app.backup import (
     safe_backup_path, create_safe_backup, restore_backup,
     list_backups, inspect_db_file
@@ -28,8 +28,18 @@ class FilesAndTimeTestSuite(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        run_schema_migration()
         Base.metadata.create_all(bind=engine)
         seed_initial_data_if_needed()
+        db = SessionLocal()
+        try:
+            if not db.query(Employee).filter(Employee.employee_id == "E100").first():
+                db.add(Employee(employee_id="E100", name="Test Worker", department="LOGISTICS", active=True))
+            if not db.query(Device).filter(Device.serial == "DEV_TEST_001").first():
+                db.add(Device(serial="DEV_TEST_001", make="CHAINWAY", model="MC95", department="INV MTS", status="Available"))
+            db.commit()
+        finally:
+            db.close()
 
     def setUp(self):
         self.client = TestClient(app)
@@ -67,9 +77,9 @@ class FilesAndTimeTestSuite(unittest.TestCase):
         self.assertEqual(fmt_datetime(dt, seconds=False), "2026-10-30 03:45 PM")
 
     # -------------------------------------------------------------
-    # 2. Login Without Shift & Automatic Shift from Scan Clock
+    # 2. Login Without Shift & Continuous Operator Transaction Tracking
     # -------------------------------------------------------------
-    def test_login_works_without_shift_and_shift_is_automatic(self):
+    def test_login_and_continuous_operator_recording(self):
         # 1. Login with only username and password (no shift_name sent)
         resp = self.client.post("/login", data={
             "username": "operator1",
@@ -84,41 +94,35 @@ class FilesAndTimeTestSuite(unittest.TestCase):
         self.assertNotIn("shift_name", session_data)
         self.assertEqual(session_data.get("username"), "operator1")
 
-        # 3. Simulate legacy client sending shift_name in cookie or body
-        legacy_token = sign_session({"username": "operator1", "role": "operator", "shift_name": "BogusShift"})
-        self.client.cookies.set("hhd_session", legacy_token)
-
-        # Get test device & employee
+        # Reset DEV_TEST_001 status
         db = SessionLocal()
-        dev = db.query(Device).filter(Device.status == "Available").first()
-        emp = db.query(Employee).filter(Employee.active == True).first()
-        self.assertIsNotNone(dev)
-        self.assertIsNotNone(emp)
-        dev_serial = dev.serial
-        emp_id = emp.employee_id
+        dev = db.query(Device).filter(Device.serial == "DEV_TEST_001").first()
+        dev.status = "Available"
+        dev.assigned_employee_id = None
+        db.commit()
         db.close()
 
+        # 3. Perform scan under operator1
+        self.client.cookies.set("hhd_session", cookie)
         scan_resp = self.client.post("/api/scan", json={
-            "code": dev_serial,
+            "code": "DEV_TEST_001",
             "mode": "Issue",
-            "pending": {"type": "employee", "code": emp_id},
-            "shift_name": "BogusShift"  # Legacy field in payload
+            "pending": {"type": "employee", "code": "E100"}
         })
         self.assertEqual(scan_resp.status_code, 200)
         self.assertTrue(scan_resp.json().get("ok"))
 
-        # Verify transaction recorded shift from server clock, ignoring BogusShift
-        clock_shift, clock_opdate = get_current_shift_and_op_date()
+        # Verify transaction recorded operator identity and calendar transaction_date
         db = SessionLocal()
-        tx = db.query(Transaction).filter(Transaction.serial == dev_serial).order_by(Transaction.id.desc()).first()
+        tx = db.query(Transaction).filter(Transaction.serial == "DEV_TEST_001").order_by(Transaction.id.desc()).first()
         self.assertIsNotNone(tx)
-        self.assertEqual(tx.shift_name, clock_shift)
-        self.assertEqual(tx.operational_date, clock_opdate)
-        self.assertNotEqual(tx.shift_name, "BogusShift")
+        self.assertEqual(tx.operator_name, "Rahul (Operator 1)")
+        self.assertEqual(tx.transaction_date, date.today().strftime("%Y-%m-%d"))
+        self.assertEqual(tx.department, "LOGISTICS")
 
         # Cleanup: Return the device
         ret_resp = self.client.post("/api/return", json={
-            "serial": dev_serial,
+            "serial": "DEV_TEST_001",
             "condition": "Working"
         })
         self.assertEqual(ret_resp.status_code, 200)
@@ -130,91 +134,15 @@ class FilesAndTimeTestSuite(unittest.TestCase):
     def _create_valid_sqlite_db_bytes(self) -> bytes:
         """Creates a byte stream of a SQLite database matching Base.metadata core tables."""
         temp_file = BACKUP_DIR / f"_temp_valid_{datetime.now().strftime('%Y%m%d_%H%M%S')}.db"
+        from sqlalchemy import create_engine
+        temp_eng = create_engine(f"sqlite:///{temp_file}")
+        Base.metadata.create_all(bind=temp_eng)
         con = sqlite3.connect(str(temp_file))
-        cur = con.cursor()
-        
-        # Create core tables with all expected columns
-        cur.execute("""
-            CREATE TABLE users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                username VARCHAR(64) NOT NULL,
-                password_hash VARCHAR(255) NOT NULL,
-                full_name VARCHAR(100) NOT NULL,
-                role VARCHAR(20) NOT NULL,
-                default_shift VARCHAR(20) NOT NULL,
-                active BOOLEAN NOT NULL,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE employees (
-                employee_id VARCHAR(64) PRIMARY KEY,
-                name VARCHAR(120) NOT NULL,
-                department VARCHAR(100) NOT NULL,
-                active BOOLEAN NOT NULL,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE devices (
-                serial VARCHAR(64) PRIMARY KEY,
-                make VARCHAR(50) NOT NULL,
-                model VARCHAR(50) NOT NULL,
-                cover_qty INTEGER NOT NULL,
-                status VARCHAR(30) NOT NULL,
-                assigned_employee_id VARCHAR(64),
-                condition VARCHAR(30) NOT NULL,
-                notes TEXT NOT NULL,
-                created_at DATETIME NOT NULL,
-                updated_at DATETIME NOT NULL
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE device_assignments (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                device_serial VARCHAR(64) NOT NULL,
-                employee_id VARCHAR(64) NOT NULL,
-                issued_at DATETIME NOT NULL,
-                issued_by_operator_id INTEGER,
-                issued_by_operator_name VARCHAR(100) NOT NULL,
-                issued_shift VARCHAR(20) NOT NULL,
-                issued_operational_date VARCHAR(10) NOT NULL,
-                returned_at DATETIME,
-                returned_by_operator_id INTEGER,
-                returned_by_operator_name VARCHAR(100),
-                returned_shift VARCHAR(20),
-                returned_operational_date VARCHAR(10),
-                status VARCHAR(20) NOT NULL,
-                condition_on_return VARCHAR(30),
-                remarks TEXT NOT NULL
-            );
-        """)
-        cur.execute("""
-            CREATE TABLE transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                transaction_time DATETIME NOT NULL,
-                operational_date VARCHAR(10) NOT NULL,
-                shift_name VARCHAR(20) NOT NULL,
-                transaction_type VARCHAR(20) NOT NULL,
-                serial VARCHAR(64) NOT NULL,
-                employee_id VARCHAR(64) NOT NULL,
-                employee_name VARCHAR(120) NOT NULL,
-                department VARCHAR(100) NOT NULL,
-                operator_id INTEGER,
-                operator_name VARCHAR(100) NOT NULL,
-                condition VARCHAR(30) NOT NULL,
-                cover_qty INTEGER NOT NULL,
-                remarks TEXT NOT NULL,
-                idempotency_key VARCHAR(100)
-            );
-        """)
-        # Insert sample row
         now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        cur.execute(f"INSERT INTO users VALUES (1, 'u1', 'p1', 'User One', 'admin', 'Morning', 1, '{now_str}', '{now_str}', NULL);".replace(", NULL);", ");"))
+        con.execute(f"INSERT INTO users (username, password_hash, full_name, role, active, created_at, updated_at) VALUES ('u1', 'p1', 'User One', 'admin', 1, '{now_str}', '{now_str}')")
         con.commit()
         con.close()
+        temp_eng.dispose()
 
         data = temp_file.read_bytes()
         temp_file.unlink()

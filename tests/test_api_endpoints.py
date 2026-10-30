@@ -10,6 +10,7 @@ from main import app, seed_initial_data_if_needed
 from app.database import engine, Base, SessionLocal
 from app.models import User, Device, Employee
 from app.auth import sign_session
+from app.migration import run_schema_migration
 
 class APIEndpointsTestSuite(unittest.TestCase):
 
@@ -18,15 +19,24 @@ class APIEndpointsTestSuite(unittest.TestCase):
 
     @classmethod
     def setUpClass(cls):
+        run_schema_migration()
         Base.metadata.create_all(bind=engine)
         seed_initial_data_if_needed()
+        db = SessionLocal()
+        try:
+            if not db.query(Employee).filter(Employee.employee_id == "1222905").first():
+                db.add(Employee(employee_id="1222905", name="Ajay Kumar", department="LOGISTICS", active=True))
+            if not db.query(Device).filter(Device.serial == "HC660DE260502008").first():
+                db.add(Device(serial="HC660DE260502008", make="CHAINWAY", model="MC95", department="INV MTS", status="Available"))
+            db.commit()
+        finally:
+            db.close()
 
     def test_login_flow(self):
         # 1. Successful Admin Login
         resp = self.client.post("/login", data={
             "username": "hhdadmin",
             "password": "admin12345",
-            "shift_name": "Morning",
             "next_url": "/admin"
         }, follow_redirects=False)
         self.assertEqual(resp.status_code, 302)
@@ -35,8 +45,7 @@ class APIEndpointsTestSuite(unittest.TestCase):
         # 2. Invalid Credentials
         resp_bad = self.client.post("/login", data={
             "username": "hhdadmin",
-            "password": "wrongpassword123",
-            "shift_name": "Morning"
+            "password": "wrongpassword123"
         }, follow_redirects=False)
         self.assertEqual(resp_bad.status_code, 400)
         self.assertIn("Invalid username or password", resp_bad.text)
@@ -65,14 +74,24 @@ class APIEndpointsTestSuite(unittest.TestCase):
 
         resp = self.client.get("/admin")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("Administrator Operations Center", resp.text)
+        self.assertIn("Operations Center", resp.text)
 
         resp_devs = self.client.get("/admin/devices")
         self.assertEqual(resp_devs.status_code, 200)
         self.assertIn("Device Inventory", resp_devs.text)
 
     def test_api_scan_over_http(self):
-        op_token = sign_session({"username": "operator1", "role": "operator", "shift_name": "Morning"})
+        db = SessionLocal()
+        try:
+            dev = db.query(Device).filter(Device.serial == "HC660DE260502008").first()
+            if dev:
+                dev.status = "Available"
+                dev.assigned_employee_id = None
+                db.commit()
+        finally:
+            db.close()
+
+        op_token = sign_session({"username": "operator1", "role": "operator"})
         self.client.cookies.set("hhd_session", op_token)
 
         # 1. Scan Worker

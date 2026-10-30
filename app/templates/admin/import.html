@@ -1,0 +1,112 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
+  <div>
+    <h1 style="font-size: 1.85rem; font-weight: 800;">Excel Master Import Wizard</h1>
+    <div class="text-muted">Import real company spreadsheets directly into the central SQLite database. No raw database uploading needed.</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/admin/devices" class="btn btn-secondary">📱 View Devices</a>
+    <a href="/admin/employees" class="btn btn-secondary">👷 View Employees</a>
+  </div>
+</div>
+
+<!-- Step 1: Download Blank Templates -->
+<div class="card" style="border-left: 4px solid var(--accent-green); margin-bottom: 1.5rem;">
+  <div class="card-title">
+    <span>Step 1: Download Official Company Excel Templates</span>
+    <span class="badge badge-available">600 Blank Rows Each</span>
+  </div>
+  <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1rem;">
+    Download pre-formatted, professionally styled templates matching the exact company column schema. Header rows are frozen, filters enabled, and serial/employee ID columns pre-configured as strict TEXT so leading zeros and letters are never corrupted.
+  </p>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 1rem;">
+    <div style="background: var(--bg-main); padding: 1rem; border-radius: 6px; border: 1px solid var(--border);">
+      <div style="font-weight: 700; margin-bottom: 0.25rem;">📱 Device Inventory Template</div>
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+        Columns: <code class="mono">Sr.No. | Make | Model No | Serial Number | Department | Remarks | Date</code>
+      </div>
+      <a href="/admin/import/template/device" class="btn btn-primary btn-sm" style="width: 100%; text-align: center;">
+        📥 Download Device_Inventory_Template.xlsx
+      </a>
+    </div>
+
+    <div style="background: var(--bg-main); padding: 1rem; border-radius: 6px; border: 1px solid var(--border);">
+      <div style="font-weight: 700; margin-bottom: 0.25rem;">👷 Employee Master Template</div>
+      <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+        Columns: <code class="mono">Sr.No. | Employee ID | Employee Name | Department | Status</code>
+      </div>
+      <a href="/admin/import/template/employee" class="btn btn-primary btn-sm" style="width: 100%; text-align: center;">
+        📥 Download Employee_Master_Template.xlsx
+      </a>
+    </div>
+  </div>
+</div>
+
+<!-- Step 2: Upload Spreadsheets for Validation & Preview -->
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; margin-bottom: 1.5rem;">
+  
+  <!-- Upload Device Inventory -->
+  <div class="card" style="border-left: 4px solid var(--accent-blue);">
+    <div class="card-title">
+      <span>Upload Device Inventory</span>
+      <span class="badge badge-issued">Excel / CSV</span>
+    </div>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
+      Upload company inventory file. Serial numbers with letters (e.g. <code class="mono">s25119524701038</code>) or leading zeros (<code class="mono">00123</code>) are strictly preserved as TEXT.
+    </p>
+    <form method="post" action="/admin/import/preview" enctype="multipart/form-data">
+      <input type="hidden" name="import_type" value="device">
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label for="device_file">Select Device Spreadsheet (.xlsx or .csv)</label>
+        <input id="device_file" name="file" type="file" accept=".xlsx,.csv" required style="padding: 0.4rem 0;">
+      </div>
+      <button class="btn btn-primary" type="submit" style="width: 100%;">
+        🔍 Inspect & Preview Device Import →
+      </button>
+    </form>
+  </div>
+
+  <!-- Upload Employee Master -->
+  <div class="card" style="border-left: 4px solid var(--accent-purple, #8b5cf6);">
+    <div class="card-title">
+      <span>Upload Employee Master</span>
+      <span class="badge badge-repair">Excel / CSV</span>
+    </div>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
+      Upload employee master file. Worker IDs are treated as barcode TEXT. Active status determines device checkout eligibility.
+    </p>
+    <form method="post" action="/admin/import/preview" enctype="multipart/form-data">
+      <input type="hidden" name="import_type" value="employee">
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label for="employee_file">Select Employee Spreadsheet (.xlsx or .csv)</label>
+        <input id="employee_file" name="file" type="file" accept=".xlsx,.csv" required style="padding: 0.4rem 0;">
+      </div>
+      <button class="btn btn-primary" type="submit" style="width: 100%;">
+        🔍 Inspect & Preview Employee Import →
+      </button>
+    </form>
+  </div>
+
+</div>
+
+<!-- Reference Guide & Modes -->
+<div class="card">
+  <div class="card-title">Import Modes & Integrity Safeguards</div>
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; font-size: 0.875rem; line-height: 1.6;">
+    <div>
+      <b style="color: #34d399;">Mode A: UPSERT / UPDATE (Recommended)</b>
+      <p class="text-muted" style="margin-top: 0.25rem;">
+        Adds new devices/employees and updates existing master records. Never overwrites transaction audit history, and never resets an actively issued device to Available merely because it appears in the spreadsheet.
+      </p>
+    </div>
+    <div>
+      <b style="color: #f87171;">Mode B: REPLACE MASTER DATA (Full Sync)</b>
+      <p class="text-muted" style="margin-top: 0.25rem;">
+        Replaces unreferenced master records with the new file. Requires explicit admin confirmation and automatically creates a verified database backup first. Blocks replacement if any device is currently out with a worker.
+      </p>
+    </div>
+  </div>
+</div>
+{% endblock %}

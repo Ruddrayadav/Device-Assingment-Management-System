@@ -3,11 +3,12 @@
 {% block content %}
 <div class="flex-between" style="margin-bottom: 1.25rem;">
   <div>
-    <h1 style="font-size: 1.75rem; font-weight: 800;">Device Inventory</h1>
-    <div class="text-muted">Manage company handheld terminals (HHDs), track statuses and batch import</div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Device Inventory Fleet</h1>
+    <div class="text-muted">Manage company handheld terminals (HHDs), track department allocations and conditions</div>
   </div>
   <div style="display: flex; gap: 0.5rem;">
-    <a href="/reports/csv/devices" class="btn btn-secondary">📥 Export CSV</a>
+    <a href="/admin/import" class="btn btn-primary">📥 Master Excel Import</a>
+    <a href="/reports/csv/devices" class="btn btn-secondary">Export CSV</a>
   </div>
 </div>
 
@@ -20,7 +21,7 @@
       <div class="form-grid">
         <div class="form-group">
           <label for="serial">Serial Number / Barcode *</label>
-          <input id="serial" name="serial" placeholder="e.g. HC660DE260502008" required>
+          <input id="serial" name="serial" placeholder="e.g. s25119524701038" required>
         </div>
         <div class="form-group">
           <label for="make">Make / Manufacturer</label>
@@ -28,19 +29,31 @@
         </div>
         <div class="form-group">
           <label for="model">Model Number</label>
-          <input id="model" name="model" value="HHD">
+          <input id="model" name="model" value="MC95">
         </div>
         <div class="form-group">
-          <label for="cover_qty">Silicone Covers Qty</label>
-          <input id="cover_qty" name="cover_qty" type="number" min="0" value="0">
+          <label for="department">Department</label>
+          <input id="department" name="department" value="INV MTS" placeholder="e.g. INV MTS">
         </div>
         <div class="form-group">
-          <label for="status">Initial Status</label>
+          <label for="status">Status</label>
           <select id="status" name="status">
-            {% for s in device_statuses %}
+            {% for s in statuses %}
             <option value="{{ s }}">{{ s }}</option>
             {% endfor %}
           </select>
+        </div>
+        <div class="form-group">
+          <label for="condition">Condition</label>
+          <select id="condition" name="condition">
+            <option value="Working">Working</option>
+            <option value="Damaged">Damaged</option>
+            <option value="Under Repair">Under Repair</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="inventory_date">Inventory / Audit Date</label>
+          <input id="inventory_date" name="inventory_date" placeholder="e.g. 28-Oct-26">
         </div>
         <div class="form-group">
           <label for="notes">Remarks / Notes</label>
@@ -51,18 +64,18 @@
     </form>
   </div>
 
-  <!-- Excel / CSV Batch Import -->
-  <div class="card">
-    <div class="card-title">Batch Import</div>
-    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 0.75rem;">
-      Upload Excel (.xlsx) or CSV containing: <b>Serial Number, Make, Model, Remarks</b>.
+  <!-- Excel Import Link Card -->
+  <div class="card" style="border-left: 4px solid var(--accent-blue);">
+    <div class="card-title">Excel Master Import</div>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
+      Upload complete company device spreadsheets (.xlsx or .csv) with columns: <b>Sr.No., Make, Model No, Serial Number, Department, Remarks, Date</b>.
     </p>
-    <form method="post" action="/admin/devices/import" enctype="multipart/form-data">
-      <div class="form-group" style="margin-bottom: 0.75rem;">
-        <input type="file" name="file" accept=".xlsx,.xls,.csv" required style="padding: 0.35rem;">
-      </div>
-      <button class="btn btn-secondary" type="submit" style="width: 100%;">Upload & Import Inventory</button>
-    </form>
+    <a href="/admin/import" class="btn btn-secondary" style="width: 100%; text-align: center; margin-bottom: 0.5rem;">
+      🚀 Open Master Import Wizard
+    </a>
+    <a href="/admin/import/template/device" class="btn btn-sm btn-secondary" style="width: 100%; text-align: center;">
+      📥 Download Device Excel Template
+    </a>
   </div>
 </div>
 
@@ -70,15 +83,24 @@
 <div class="card" style="padding: 1rem;">
   <form method="get" action="/admin/devices" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
     <div class="form-group" style="flex: 2; min-width: 200px;">
-      <label for="q">Search Serial, Make, Model or Remarks</label>
-      <input id="q" name="q" value="{{ q }}" placeholder="Type serial to filter...">
+      <label for="q">Search Serial, Make, Model, Dept or Notes</label>
+      <input id="q" name="q" value="{{ q }}" placeholder="Type to filter...">
     </div>
-    <div class="form-group" style="flex: 1; min-width: 150px;">
+    <div class="form-group" style="flex: 1; min-width: 140px;">
       <label for="status_filter">Filter by Status</label>
       <select id="status_filter" name="status_filter">
         <option value="All">All Statuses</option>
-        {% for s in device_statuses %}
+        {% for s in statuses %}
         <option value="{{ s }}" {{ 'selected' if status_filter == s else '' }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 140px;">
+      <label for="dept_filter">Filter by Department</label>
+      <select id="dept_filter" name="dept_filter">
+        <option value="All">All Departments</option>
+        {% for d in departments %}
+        <option value="{{ d }}" {{ 'selected' if dept_filter == d else '' }}>{{ d }}</option>
         {% endfor %}
       </select>
     </div>
@@ -89,17 +111,21 @@
 
 <!-- Device List Table -->
 <div class="card">
+  <div class="card-title flex-between">
+    <span>Registered Devices ({{ devices|length }})</span>
+  </div>
   <div class="table-wrap">
     <table>
       <thead>
         <tr>
           <th>Serial Number</th>
           <th>Make / Model</th>
-          <th>Covers</th>
+          <th>Department</th>
           <th>Status</th>
           <th>Condition</th>
-          <th>Assigned Worker</th>
-          <th>Department</th>
+          <th>Currently With</th>
+          <th>Inventory Date</th>
+          <th>Notes</th>
           <th>Updated</th>
         </tr>
       </thead>
@@ -107,21 +133,29 @@
         {% for d in devices %}
         <tr>
           <td class="mono"><b>{{ d.serial }}</b></td>
-          <td>{{ d.make }} / {{ d.model }}</td>
-          <td>{{ d.cover_qty }}</td>
+          <td>{{ d.make }} {{ d.model }}</td>
+          <td><span class="badge badge-secondary">{{ d.department }}</span></td>
           <td>
             <span class="badge {{ 'badge-available' if d.status == 'Available' else ('badge-issued' if d.status == 'Issued' else 'badge-damaged') }}">
               {{ d.status }}
             </span>
           </td>
           <td>{{ d.condition }}</td>
-          <td>{{ d.employee_name or '—' }}</td>
-          <td>{{ d.department or '—' }}</td>
-          <td style="font-size: 0.8rem;" class="text-muted">{{ d.updated_at }}</td>
+          <td>
+            {% if d.employee_name %}
+              <b>{{ d.employee_name }}</b>
+              <span class="text-muted" style="font-size: 0.75rem;">({{ d.assigned_employee_id }})</span>
+            {% else %}
+              <span class="text-muted">— In Stock —</span>
+            {% endif %}
+          </td>
+          <td class="mono" style="font-size: 0.8rem;">{{ d.inventory_date or '—' }}</td>
+          <td style="font-size: 0.8rem;">{{ d.notes }}</td>
+          <td class="mono" style="font-size: 0.8rem;">{{ d.updated_at }}</td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="8" class="text-muted">No devices matched your query.</td>
+          <td colspan="9" class="text-muted" style="text-align: center; padding: 2rem;">No devices found matching filter.</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -129,4 +163,3 @@
   </div>
 </div>
 {% endblock %}
-

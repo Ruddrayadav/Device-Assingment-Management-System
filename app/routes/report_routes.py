@@ -22,24 +22,44 @@ router = APIRouter()
 @router.get("/admin/reports", response_class=HTMLResponse)
 async def reports_page(
     request: Request,
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
 ):
+    operators = db.query(User.full_name).filter(User.full_name != "").distinct().all()
+    departments = db.query(Device.department).distinct().all()
     return templates.TemplateResponse(request=request, name="admin/reports.html", context={
         "title": "Reports & Analytics - Admin",
-        "user": admin
+        "user": admin,
+        "operators": [o[0] for o in operators if o[0]],
+        "departments": [d[0] for d in departments if d[0]]
     })
 
 @router.get("/reports/excel")
 async def download_excel_report(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    shift_name: Optional[str] = Query(None),
+    operator: Optional[str] = Query(None),
+    employee: Optional[str] = Query(None),
+    serial: Optional[str] = Query(None),
+    department: Optional[str] = Query(None),
+    transaction_type: Optional[str] = Query(None),
+    condition: Optional[str] = Query(None),
     user: User = Depends(require_user),
     db: Session = Depends(get_db)
 ):
-    excel_stream = generate_excel_report(db, start_date=start_date, end_date=end_date, shift_name=shift_name)
+    excel_stream = generate_excel_report(
+        db,
+        start_date=start_date,
+        end_date=end_date,
+        operator=operator,
+        employee=employee,
+        serial=serial,
+        department=department,
+        transaction_type=transaction_type,
+        condition=condition
+    )
     timestamp = datetime.now().strftime("%Y%m%d_%H%M")
-    filename = f"HHD_Management_Report_{timestamp}.xlsx"
+    filename = f"HHD_Warehouse_Report_{timestamp}.xlsx"
 
     return Response(
         content=excel_stream.getvalue(),
@@ -55,13 +75,14 @@ async def export_devices_csv(
     devices = db.query(Device).order_by(Device.serial.asc()).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Serial", "Make", "Model", "Cover Qty", "Status", "Condition", "Assigned Employee ID", "Assigned Employee Name", "Department", "Notes", "Updated At"])
+    writer.writerow(["Serial", "Make", "Model", "Department", "Cover Qty", "Status", "Condition", "Assigned Employee ID", "Assigned Employee Name", "Notes", "Updated At"])
 
     for d in devices:
         emp = db.query(Employee).filter(Employee.employee_id == d.assigned_employee_id).first() if d.assigned_employee_id else None
         writer.writerow([
-            d.serial, d.make, d.model, d.cover_qty, d.status, d.condition,
-            d.assigned_employee_id or "", emp.name if emp else "", emp.department if emp else "",
+            d.serial, d.make, d.model, getattr(d, "department", "GENERAL"),
+            d.cover_qty, d.status, d.condition,
+            d.assigned_employee_id or "", emp.name if emp else "",
             d.notes, fmt_datetime(d.updated_at)
         ])
 
@@ -102,12 +123,12 @@ async def export_transactions_csv(
     txs = db.query(Transaction).order_by(Transaction.id.desc()).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["TX ID", "Date Time", "Operational Date", "Shift", "Action", "Device Serial", "Employee ID", "Employee Name", "Department", "Operator", "Condition", "Covers", "Remarks"])
+    writer.writerow(["TX ID", "Exact Time", "Date", "Action", "Device Serial", "Employee ID", "Employee Name", "Department", "Operator", "Condition", "Covers", "Remarks"])
 
     for t in txs:
         writer.writerow([
             t.id, fmt_datetime(t.transaction_time),
-            t.operational_date, t.shift_name, t.transaction_type, t.serial,
+            t.transaction_date, t.transaction_type, t.serial,
             t.employee_id, t.employee_name, t.department, t.operator_name,
             t.condition, t.cover_qty, t.remarks
         ])
@@ -127,15 +148,16 @@ async def export_damage_csv(
     dmgs = db.query(DamageReport).order_by(DamageReport.id.desc()).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Report ID", "Report Time", "Operational Date", "Shift", "Device Serial", "Employee ID", "Employee Name", "Department", "Fault Type", "Details", "Reported By", "Review Status", "Resolution", "Resolved At"])
+    writer.writerow(["Report ID", "Report Time", "Date", "Device Serial", "Employee ID", "Employee Name", "Department", "Fault Type", "Details", "Reported By", "Review Status", "Resolution", "Resolved At"])
 
     for d in dmgs:
         writer.writerow([
             d.id, fmt_datetime(d.report_time),
-            d.operational_date, d.shift_name, d.serial, d.employee_id or "", d.employee_name or "",
+            getattr(d, "report_date", d.report_time.strftime("%Y-%m-%d")),
+            d.serial, d.employee_id or "", d.employee_name or "",
             d.department or "", d.fault_type, d.details, d.reported_by_name,
             d.review_status, d.resolution_notes or "",
-            fmt_datetime(d.resolved_at)
+            fmt_datetime(d.resolved_at) if d.resolved_at else ""
         ])
 
     csv_data = ("\ufeff" + output.getvalue()).encode("utf-8")
