@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Transaction Audit Trail</h1>
+    <div class="text-muted">Permanent, tamper-evident log of every device issue and return across all shifts</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/reports/csv/transactions" class="btn btn-secondary">📥 Export CSV</a>
+  </div>
+</div>
+
+<!-- Filters -->
+<div class="card" style="padding: 1rem;">
+  <form method="get" action="/admin/transactions" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+    <div class="form-group" style="flex: 2; min-width: 200px;">
+      <label for="q">Search Keyword</label>
+      <input id="q" name="q" value="{{ q }}" placeholder="Serial, Employee ID, Name or Operator...">
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 140px;">
+      <label for="type_filter">Action</label>
+      <select id="type_filter" name="type_filter">
+        <option value="All">All Actions</option>
+        <option value="Issue" {{ 'selected' if type_filter == 'Issue' else '' }}>Issue (Handover)</option>
+        <option value="Return" {{ 'selected' if type_filter == 'Return' else '' }}>Return (Takeover)</option>
+      </select>
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 140px;">
+      <label for="shift_filter">Shift</label>
+      <select id="shift_filter" name="shift_filter">
+        <option value="All">All Shifts</option>
+        <option value="Morning" {{ 'selected' if shift_filter == 'Morning' else '' }}>Morning</option>
+        <option value="Evening" {{ 'selected' if shift_filter == 'Evening' else '' }}>Evening</option>
+        <option value="Night" {{ 'selected' if shift_filter == 'Night' else '' }}>Night</option>
+      </select>
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 140px;">
+      <label for="date_filter">Operational Date</label>
+      <input id="date_filter" name="date_filter" type="date" value="{{ date_filter }}">
+    </div>
+    <button class="btn btn-primary" type="submit">Filter</button>
+    <a href="/admin/transactions" class="btn btn-secondary">Clear</a>
+  </form>
+</div>
+
+<!-- Transactions Table -->
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>TX ID</th>
+          <th>Date & Time</th>
+          <th>Op Date</th>
+          <th>Shift</th>
+          <th>Action</th>
+          <th>Device Serial</th>
+          <th>Employee ID</th>
+          <th>Employee Name</th>
+          <th>Department</th>
+          <th>Operator</th>
+          <th>Condition</th>
+          <th>Remarks</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in transactions %}
+        <tr>
+          <td class="mono">{{ t.id }}</td>
+          <td class="mono" style="font-size: 0.8rem; white-space: nowrap;">
+            {{ t.transaction_time.strftime('%Y-%m-%d %H:%M:%S') if t.transaction_time else '' }}
+          </td>
+          <td class="mono" style="font-size: 0.8rem;">{{ t.operational_date }}</td>
+          <td><span class="shift-tag">{{ t.shift_name }}</span></td>
+          <td>
+            <span class="badge {{ 'badge-issued' if t.transaction_type == 'Issue' else 'badge-available' }}">
+              {{ t.transaction_type }}
+            </span>
+          </td>
+          <td class="mono"><b>{{ t.serial }}</b></td>
+          <td class="mono">{{ t.employee_id }}</td>
+          <td>{{ t.employee_name }}</td>
+          <td>{{ t.department }}</td>
+          <td>{{ t.operator_name }}</td>
+          <td>
+            {% if t.condition == 'Working' %}
+            <span class="text-muted">Working</span>
+            {% else %}
+            <span class="badge badge-damaged">{{ t.condition }}</span>
+            {% endif %}
+          </td>
+          <td style="font-size: 0.8rem;" class="text-muted">{{ t.remarks }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="12" class="text-muted">No transactions found matching your criteria.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

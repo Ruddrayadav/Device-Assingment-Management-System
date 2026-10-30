@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block head %}
+<style>
+  .login-wrapper {
+    max-width: 440px;
+    margin: 4rem auto;
+  }
+  .login-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2.25rem;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+  }
+  .login-header {
+    text-align: center;
+    margin-bottom: 2rem;
+  }
+  .login-title {
+    font-size: 1.65rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+  }
+  .login-sub {
+    color: var(--text-muted);
+    font-size: 0.9rem;
+    margin-top: 0.35rem;
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="login-wrapper">
+  <div class="login-card">
+    <div class="login-header">
+      <div style="font-size: 2.5rem; margin-bottom: 0.5rem;">📦</div>
+      <h1 class="login-title">HHD Management</h1>
+      <p class="login-sub">Sign in to your shift workstation</p>
+    </div>
+
+    {% if error %}
+    <div class="flash error">
+      {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="next_url" value="{{ request.query_params.get('next', '/') }}">
+
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label for="username">Operator / Admin Username</label>
+        <input id="username" name="username" value="{{ username or '' }}" required autofocus autocomplete="username">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" required autocomplete="current-password">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.75rem;">
+        <label for="shift_name">Active Shift</label>
+        <select id="shift_name" name="shift_name">
+          <option value="Morning">Morning Shift (06:00 - 14:00)</option>
+          <option value="Evening">Evening Shift (14:00 - 22:00)</option>
+          <option value="Night">Night Shift (22:00 - 06:00 next day)</option>
+        </select>
+      </div>
+
+      <button class="btn btn-primary" type="submit" style="width: 100%; padding: 0.85rem; font-size: 1.05rem;">
+        Sign In to Workstation
+      </button>
+    </form>
+  </div>
+</div>
+{% endblock %}
+

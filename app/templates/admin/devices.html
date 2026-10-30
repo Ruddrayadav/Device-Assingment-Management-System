@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Device Inventory</h1>
+    <div class="text-muted">Manage company handheld terminals (HHDs), track statuses and batch import</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/reports/csv/devices" class="btn btn-secondary">📥 Export CSV</a>
+  </div>
+</div>
+
+<!-- Add Device & Import Forms -->
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+  <!-- Add / Edit Single Device -->
+  <div class="card">
+    <div class="card-title">Add / Update Device</div>
+    <form method="post" action="/admin/devices">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="serial">Serial Number / Barcode *</label>
+          <input id="serial" name="serial" placeholder="e.g. HC660DE260502008" required>
+        </div>
+        <div class="form-group">
+          <label for="make">Make / Manufacturer</label>
+          <input id="make" name="make" value="CHAINWAY">
+        </div>
+        <div class="form-group">
+          <label for="model">Model Number</label>
+          <input id="model" name="model" value="HHD">
+        </div>
+        <div class="form-group">
+          <label for="cover_qty">Silicone Covers Qty</label>
+          <input id="cover_qty" name="cover_qty" type="number" min="0" value="0">
+        </div>
+        <div class="form-group">
+          <label for="status">Initial Status</label>
+          <select id="status" name="status">
+            {% for s in device_statuses %}
+            <option value="{{ s }}">{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group">
+          <label for="notes">Remarks / Notes</label>
+          <input id="notes" name="notes" placeholder="Optional notes">
+        </div>
+      </div>
+      <button class="btn btn-primary" type="submit">Save Device Record</button>
+    </form>
+  </div>
+
+  <!-- Excel / CSV Batch Import -->
+  <div class="card">
+    <div class="card-title">Batch Import</div>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 0.75rem;">
+      Upload Excel (.xlsx) or CSV containing: <b>Serial Number, Make, Model, Remarks</b>.
+    </p>
+    <form method="post" action="/admin/devices/import" enctype="multipart/form-data">
+      <div class="form-group" style="margin-bottom: 0.75rem;">
+        <input type="file" name="file" accept=".xlsx,.xls,.csv" required style="padding: 0.35rem;">
+      </div>
+      <button class="btn btn-secondary" type="submit" style="width: 100%;">Upload & Import Inventory</button>
+    </form>
+  </div>
+</div>
+
+<!-- Search & Filter Bar -->
+<div class="card" style="padding: 1rem;">
+  <form method="get" action="/admin/devices" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+    <div class="form-group" style="flex: 2; min-width: 200px;">
+      <label for="q">Search Serial, Make, Model or Remarks</label>
+      <input id="q" name="q" value="{{ q }}" placeholder="Type serial to filter...">
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 150px;">
+      <label for="status_filter">Filter by Status</label>
+      <select id="status_filter" name="status_filter">
+        <option value="All">All Statuses</option>
+        {% for s in device_statuses %}
+        <option value="{{ s }}" {{ 'selected' if status_filter == s else '' }}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Filter</button>
+    <a href="/admin/devices" class="btn btn-secondary">Clear</a>
+  </form>
+</div>
+
+<!-- Device List Table -->
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Serial Number</th>
+          <th>Make / Model</th>
+          <th>Covers</th>
+          <th>Status</th>
+          <th>Condition</th>
+          <th>Assigned Worker</th>
+          <th>Department</th>
+          <th>Updated</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in devices %}
+        <tr>
+          <td class="mono"><b>{{ d.serial }}</b></td>
+          <td>{{ d.make }} / {{ d.model }}</td>
+          <td>{{ d.cover_qty }}</td>
+          <td>
+            <span class="badge {{ 'badge-available' if d.status == 'Available' else ('badge-issued' if d.status == 'Issued' else 'badge-damaged') }}">
+              {{ d.status }}
+            </span>
+          </td>
+          <td>{{ d.condition }}</td>
+          <td>{{ d.employee_name or '—' }}</td>
+          <td>{{ d.department or '—' }}</td>
+          <td style="font-size: 0.8rem;" class="text-muted">{{ d.updated_at }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-muted">No devices matched your query.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

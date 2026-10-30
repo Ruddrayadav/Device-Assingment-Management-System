@@ -1,0 +1,30 @@
+{% extends "base.html" %}{% block bodyclass %}{{ 'tv' if readonly }}{% endblock %}{% block body %}
+{% if not readonly %}
+<section class="desk" id="desk" aria-live="polite">
+  <div class="scanbox"><label for="scan">Scan or type a barcode, then press Enter</label>
+    <input id="scan" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Device or employee ID" autofocus>
+    <div class="steps"><span class="chip" id="c-dev">Device</span><span class="chip" id="c-emp">Employee ID</span></div></div>
+  <div class="msg"><div class="big" id="big">Ready to scan</div><div class="sub" id="sub"></div><div class="acts" id="acts"></div></div>
+</section>
+{% else %}<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px"><h1 style="font-size:20px">HHD device board</h1><span class="muted">Read only · updates automatically</span></div>{% endif %}
+<section class="kpis">
+  <div class="kpi"><span><i class="dot go"></i>Available</span><b id="k-av">0</b></div>
+  <div class="kpi"><span><i class="dot stop"></i>Allotted</span><b id="k-al">0</b></div>
+  <div class="kpi"><span><i class="dot hold"></i>Not handed over today</span><b id="k-nt">0</b></div>
+  <div class="kpi"><span>Open damage / missing</span><b id="k-is">0</b></div>
+  <div class="kpi"><span>Out / back today</span><b id="k-td">0</b></div>
+</section>
+<div class="layout"><div>
+  <div class="boards">
+    <section class="sec"><h2><i class="dot go"></i>Available<em id="n-av"></em></h2><div class="tiles" id="av"></div></section>
+    <section class="sec"><h2><i class="dot stop"></i>Allotted<em id="n-al"></em></h2><div class="tiles" id="al"></div></section>
+  </div>
+  <section class="sec"><h2><i class="dot hold"></i>Not handed over today <span id="nt-date" class="muted"></span><em id="nt-sum"></em></h2><div class="list" id="nt"></div></section>
+  <section class="sec" id="unsec" hidden><h2><i class="dot hold"></i>Unavailable (damaged / missing / repair)</h2><div class="tiles" id="un"></div></section>
+</div>
+<aside><section class="sec feed"><h2>Recent activity<em class="live" id="live"></em></h2><div id="feed"></div>
+{% if not readonly %}<hr><button class="mute" id="mute" type="button">Sound on</button>{% endif %}</section></aside></div>
+<script id="boot" type="application/json">{{ boot|tojson }}</script>
+<dialog id="dlg"></dialog>
+<script src="{{ asset('board.js') }}"></script>
+{% endblock %}

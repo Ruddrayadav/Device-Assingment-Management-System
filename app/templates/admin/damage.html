@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Damage & Repair Management</h1>
+    <div class="text-muted">Quarantine tracking, inspection, repair approvals and return-to-service validation</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/reports/csv/damage" class="btn btn-secondary">📥 Export CSV</a>
+  </div>
+</div>
+
+<!-- Filter by Status -->
+<div class="card" style="padding: 1rem;">
+  <form method="get" action="/admin/damage" style="display: flex; gap: 0.75rem; align-items: flex-end;">
+    <div class="form-group" style="flex: 1; max-width: 300px;">
+      <label for="status_filter">Review Status</label>
+      <select id="status_filter" name="status_filter">
+        <option value="All">All Reports</option>
+        <option value="Open" {{ 'selected' if status_filter == 'Open' else '' }}>Open (Awaiting Inspection)</option>
+        <option value="Under Repair" {{ 'selected' if status_filter == 'Under Repair' else '' }}>Under Repair</option>
+        <option value="Repaired/Available" {{ 'selected' if status_filter == 'Repaired/Available' else '' }}>Repaired / Back to Stock</option>
+        <option value="Written Off" {{ 'selected' if status_filter == 'Written Off' else '' }}>Written Off / Scrapped</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Filter</button>
+    <a href="/admin/damage" class="btn btn-secondary">Clear</a>
+  </form>
+</div>
+
+<!-- Damage Reports Table -->
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Reported Time</th>
+          <th>Device Serial</th>
+          <th>Worker ID / Name</th>
+          <th>Fault Category</th>
+          <th>Details</th>
+          <th>Reported By</th>
+          <th>Current Status</th>
+          <th>Resolution Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in reports %}
+        <tr>
+          <td class="mono">{{ r.id }}</td>
+          <td class="mono" style="font-size: 0.8rem; white-space: nowrap;">
+            {{ r.report_time.strftime('%Y-%m-%d %H:%M') if r.report_time else '' }}
+          </td>
+          <td class="mono"><b>{{ r.serial }}</b></td>
+          <td>
+            {{ r.employee_name or '—' }}
+            {% if r.employee_id %}
+            <small class="text-muted mono">({{ r.employee_id }})</small>
+            {% endif %}
+          </td>
+          <td><span class="badge badge-damaged">{{ r.fault_type }}</span></td>
+          <td style="font-size: 0.85rem;">{{ r.details }}</td>
+          <td>{{ r.reported_by_name }}</td>
+          <td>
+            <span class="badge {{ 'badge-damaged' if r.review_status == 'Open' else ('badge-repair' if r.review_status == 'Under Repair' else 'badge-available') }}">
+              {{ r.review_status }}
+            </span>
+          </td>
+          <td>
+            <form method="post" action="/admin/damage/{{ r.id }}/update" style="display: flex; gap: 0.5rem; align-items: center;">
+              <select name="review_status" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
+                <option value="Open" {{ 'selected' if r.review_status == 'Open' else '' }}>Open</option>
+                <option value="Under Repair" {{ 'selected' if r.review_status == 'Under Repair' else '' }}>Under Repair</option>
+                <option value="Repaired/Available" {{ 'selected' if r.review_status == 'Repaired/Available' else '' }}>Repaired (Return to Fleet)</option>
+                <option value="Written Off" {{ 'selected' if r.review_status == 'Written Off' else '' }}>Written Off</option>
+                <option value="Closed" {{ 'selected' if r.review_status == 'Closed' else '' }}>Closed</option>
+              </select>
+              <input name="resolution_notes" value="{{ r.resolution_notes or '' }}" placeholder="Resolution note..." style="font-size: 0.8rem; padding: 0.25rem 0.5rem; width: 140px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
+              <button class="btn btn-sm btn-primary" type="submit">Update</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" class="text-muted">No damage reports on file.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

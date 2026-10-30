@@ -1,0 +1,12 @@
+{% extends "base.html" %}{% block body %}
+<div class="panel"><h2>Damage / missing tracker</h2>
+<form method="post" class="no-print"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="row">
+<div class="field"><label>Device serial *</label><input name="serial" required placeholder="Scan or type serial"></div><div class="field"><label>Employee ID (optional)</label><input name="employee_id"></div>
+<div class="field"><label>Issue type</label><select name="issue_type"><option>Damaged</option><option>Missing</option><option>Under Repair</option><option>Accessory Missing</option></select></div>
+<div class="field"><label>Details *</label><input name="details" required></div><div class="field" style="flex:0"><button>Report issue</button></div></div></form>
+<p class="muted">Closing the last open issue on a device returns it to Available automatically.</p>
+<div class="tablewrap"><table><thead><tr><th>ID</th><th>Reported</th><th>Serial</th><th>Employee</th><th>Issue</th><th>Details</th><th>By</th><th>Review</th><th class="no-print">Update</th></tr></thead><tbody>
+{% for r in rows %}<tr><td>{{ r.id }}</td><td>{{ r.report_time }}</td><td class="mono">{{ r.serial }}</td><td>{{ r.employee_name }}</td><td>{{ r.issue_type }}</td><td style="white-space:normal;min-width:180px">{{ r.details }}</td><td>{{ r.reported_by }}</td><td>{{ r.review_status }}</td>
+<td class="no-print"><form method="post" action="{{ url_for('damage_update', rid=r.id) }}" class="row" style="flex-wrap:nowrap"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+<select name="review_status" style="width:130px">{% for s in ['Open','Under Review','Closed'] %}<option {{ 'selected' if r.review_status==s }}>{{ s }}</option>{% endfor %}</select><input name="resolution" placeholder="Resolution" value="{{ r.resolution }}" style="width:170px"><button>Save</button></form></td></tr>
+{% else %}<tr><td colspan="9">No issue records.</td></tr>{% endfor %}</tbody></table></div></div>{% endblock %}

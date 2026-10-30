@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{ title }} · HHD Desk</title><link rel="stylesheet" href="{{ asset('app.css') }}"></head>
+<body class="{% block bodyclass %}{% endblock %}">
+{% if not bare %}
+<header class="top"><div class="brand">HHD Desk</div>
+{% if session.get('user') %}<nav>{% set ep = request.endpoint %}
+<a href="{{ url_for('dashboard') }}" class="{{ 'on' if ep=='dashboard' }}">Scan desk</a>
+<a href="{{ url_for('board') }}" class="{{ 'on' if ep=='board' }}">Display board</a>
+<a href="{{ url_for('devices') }}" class="{{ 'on' if ep=='devices' }}">Devices</a>
+<a href="{{ url_for('employees') }}" class="{{ 'on' if ep=='employees' }}">Employees</a>
+<a href="{{ url_for('transactions') }}" class="{{ 'on' if ep=='transactions' }}">Audit</a>
+<a href="{{ url_for('damage') }}" class="{{ 'on' if ep=='damage' }}">Damage / missing</a>
+<a href="{{ url_for('exports') }}" class="{{ 'on' if ep=='exports' }}">Reports</a>
+{% if session.get('role')=='admin' %}<a href="{{ url_for('users') }}" class="{{ 'on' if ep=='users' }}">Users</a>{% endif %}</nav>
+<div class="who">{{ session.get('user') }} ({{ session.get('role') }}) · <a href="{{ url_for('logout') }}">Sign out</a></div>{% endif %}
+</header>{% endif %}
+<main>{% with messages=get_flashed_messages(with_categories=true) %}{% for c,m in messages %}<div class="flash {{ 'error' if c=='error' }}">{{ m }}</div>{% endfor %}{% endwith %}
+{% block body %}{% endblock %}</main></body></html>

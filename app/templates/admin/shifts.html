@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Shift Reconciliation & Closing</h1>
+    <div class="text-muted">Mathematical verification of every device issued vs returned per operational shift</div>
+  </div>
+  <div>
+    <a href="/reports/excel?shift_name={{ target_shift }}&start_date={{ target_date }}&end_date={{ target_date }}" class="btn btn-primary">
+      📥 Download Shift Excel Report
+    </a>
+  </div>
+</div>
+
+<!-- Shift Selector -->
+<div class="card" style="padding: 1.25rem;">
+  <form method="get" action="/admin/shifts" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+    <div class="form-group" style="flex: 1; min-width: 180px;">
+      <label for="op_date">Operational Shift Date</label>
+      <input id="op_date" name="op_date" type="date" value="{{ target_date }}" required>
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 180px;">
+      <label for="shift_name">Shift</label>
+      <select id="shift_name" name="shift_name">
+        <option value="Morning" {{ 'selected' if target_shift == 'Morning' else '' }}>Morning Shift (06:00 - 14:00)</option>
+        <option value="Evening" {{ 'selected' if target_shift == 'Evening' else '' }}>Evening Shift (14:00 - 22:00)</option>
+        <option value="Night" {{ 'selected' if target_shift == 'Night' else '' }}>Night Shift (22:00 - 06:00)</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Load Reconciliation</button>
+  </form>
+</div>
+
+<!-- Reconciliation KPI Metrics Grid -->
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Total Issued in Shift</div>
+    <div class="kpi-value" style="color: #60a5fa;">{{ reconciliation.total_issued }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Total Returned in Shift</div>
+    <div class="kpi-value" style="color: #34d399;">{{ reconciliation.total_returned }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Working Condition</div>
+    <div class="kpi-value">{{ reconciliation.working_returned }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Damaged / Faulty</div>
+    <div class="kpi-value {{ 'alert' if reconciliation.damaged_returned > 0 else '' }}">
+      {{ reconciliation.damaged_returned }}
+    </div>
+  </div>
+  <div class="kpi-card" style="border: 2px solid {{ '#ef4444' if reconciliation.outstanding_count > 0 else '#10b981' }};">
+    <div class="kpi-label">Outstanding Balance</div>
+    <div class="kpi-value {{ 'alert' if reconciliation.outstanding_count > 0 else '' }}">
+      {{ reconciliation.outstanding_count }}
+    </div>
+  </div>
+</div>
+
+<!-- Discrepancy Alert Banner -->
+{% if reconciliation.outstanding_count > 0 %}
+<div class="flash error" style="margin-bottom: 1.5rem;">
+  <b>⚠️ UNRESOLVED DISCREPANCY:</b> There are {{ reconciliation.outstanding_count }} device(s) issued during this shift that have NOT been returned. Do not leave the warehouse floor until these devices are accounted for.
+</div>
+{% else %}
+<div class="flash success" style="margin-bottom: 1.5rem;">
+  <b>✓ PERFECT RECONCILIATION:</b> All {{ reconciliation.total_issued }} devices issued during this shift have been accounted for and returned to inventory.
+</div>
+{% endif %}
+
+<!-- Outstanding Devices Detail Breakdown -->
+<div class="card">
+  <div class="card-title">
+    <span>📋 Devices Still Assigned to Workers (Unreturned from This Shift: {{ reconciliation.outstanding_devices|length }})</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device Serial</th>
+          <th>Worker ID</th>
+          <th>Worker Name</th>
+          <th>Department</th>
+          <th>Issued At</th>
+          <th>Issued By Operator</th>
+          <th>Current Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for d in reconciliation.outstanding_devices %}
+        <tr>
+          <td class="mono"><b>{{ d.serial }}</b></td>
+          <td class="mono">{{ d.employee_id }}</td>
+          <td><b>{{ d.employee_name }}</b></td>
+          <td>{{ d.department }}</td>
+          <td class="mono" style="font-size: 0.85rem;">{{ d.issued_at }}</td>
+          <td>{{ d.issued_by }}</td>
+          <td><span class="badge badge-issued">{{ d.current_status }}</span></td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-muted">Zero outstanding devices for this shift.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Shift Closing Panel -->
+<div class="card mt-4" style="border-left: 4px solid var(--primary);">
+  <div class="card-title">
+    <span>🔒 Shift Closing & Handover Seal</span>
+    {% if reconciliation.is_closed %}
+    <span class="badge badge-available">Shift Closed by {{ reconciliation.closed_by }} at {{ reconciliation.closed_at }}</span>
+    {% else %}
+    <span class="badge badge-missing">Shift Open (Active)</span>
+    {% endif %}
+  </div>
+  <p class="text-muted" style="font-size: 0.9rem; margin-bottom: 1rem;">
+    Closing the shift logs the final reconciliation counts into the database audit records. Never marks outstanding devices as returned.
+  </p>
+  <form method="post" action="/admin/shifts/close">
+    <input type="hidden" name="operational_date" value="{{ target_date }}">
+    <input type="hidden" name="shift_name" value="{{ target_shift }}">
+    
+    <div class="form-group" style="margin-bottom: 1rem;">
+      <label for="notes">Shift Handover Remarks / Discrepancy Explanation</label>
+      <textarea id="notes" name="notes" rows="2" placeholder="e.g. 2 devices held by IB Puter overnight with shift lead approval..."></textarea>
+    </div>
+    <button class="btn btn-primary" type="submit">
+      {{ 'Update Closed Shift Record' if reconciliation.is_closed else 'Close & Reconcile Shift' }}
+    </button>
+  </form>
+</div>
+
+<!-- Historical Shift Closing Logs -->
+<div class="card mt-4">
+  <div class="card-title">Historical Shift Closing Logs</div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Operational Date</th>
+          <th>Shift</th>
+          <th>Issued</th>
+          <th>Returned</th>
+          <th>Working</th>
+          <th>Damaged</th>
+          <th>Outstanding</th>
+          <th>Closed By</th>
+          <th>Closed At</th>
+          <th>Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for s in shift_logs %}
+        <tr>
+          <td class="mono">{{ s.operational_date }}</td>
+          <td><span class="shift-tag">{{ s.shift_name }}</span></td>
+          <td>{{ s.total_issued }}</td>
+          <td>{{ s.total_returned }}</td>
+          <td>{{ s.total_working }}</td>
+          <td>{{ s.total_damaged }}</td>
+          <td>
+            <span class="badge {{ 'badge-damaged' if s.total_outstanding > 0 else 'badge-available' }}">
+              {{ s.total_outstanding }}
+            </span>
+          </td>
+          <td>{{ s.closed_by_name }}</td>
+          <td class="mono" style="font-size: 0.8rem;">{{ s.closed_at.strftime('%Y-%m-%d %H:%M') if s.closed_at else '' }}</td>
+          <td style="font-size: 0.85rem;" class="text-muted">{{ s.notes }}</td>
+        </tr>
+        {% else %}
+        <tr><td colspan="10" class="text-muted">No shifts closed yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,125 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Employee Master</h1>
+    <div class="text-muted">Manage authorized warehouse personnel, active statuses and scan records</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/reports/csv/employees" class="btn btn-secondary">📥 Export CSV</a>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; margin-bottom: 1.25rem;">
+  <!-- Add Employee Form -->
+  <div class="card">
+    <div class="card-title">Add / Update Employee</div>
+    <form method="post" action="/admin/employees">
+      <div class="form-grid">
+        <div class="form-group">
+          <label for="employee_id">Employee ID / Badge Barcode *</label>
+          <input id="employee_id" name="employee_id" value="{{ prefill or '' }}" placeholder="e.g. 1222905" required>
+        </div>
+        <div class="form-group">
+          <label for="name">Full Name *</label>
+          <input id="name" name="name" placeholder="e.g. Ajay Kumar" required>
+        </div>
+        <div class="form-group">
+          <label for="department">Department / Station *</label>
+          <input id="department" name="department" placeholder="e.g. IB Puter, Dispatch Scanner" required>
+        </div>
+      </div>
+      <button class="btn btn-primary" type="submit">Save Employee Record</button>
+    </form>
+  </div>
+
+  <!-- Excel / CSV Batch Import -->
+  <div class="card">
+    <div class="card-title">Batch Import Personnel</div>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 0.75rem;">
+      Upload Excel (.xlsx) or CSV with columns: <b>Employee ID, Name, Department</b>.
+    </p>
+    <form method="post" action="/admin/employees/import" enctype="multipart/form-data">
+      <div class="form-group" style="margin-bottom: 0.75rem;">
+        <input type="file" name="file" accept=".xlsx,.xls,.csv" required style="padding: 0.35rem;">
+      </div>
+      <button class="btn btn-secondary" type="submit" style="width: 100%;">Upload & Import Employees</button>
+    </form>
+  </div>
+</div>
+
+<!-- Search & Filters -->
+<div class="card" style="padding: 1rem;">
+  <form method="get" action="/admin/employees" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+    <div class="form-group" style="flex: 2; min-width: 200px;">
+      <label for="q">Search Employee ID, Name or Department</label>
+      <input id="q" name="q" value="{{ q }}" placeholder="Type name or badge ID...">
+    </div>
+    <div class="form-group" style="flex: 1; min-width: 150px;">
+      <label for="status_filter">Filter by Status</label>
+      <select id="status_filter" name="status_filter">
+        <option value="All">All Workers</option>
+        <option value="Active" {{ 'selected' if status_filter == 'Active' else '' }}>Active Only</option>
+        <option value="Inactive" {{ 'selected' if status_filter == 'Inactive' else '' }}>Inactive Only</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Filter</button>
+    <a href="/admin/employees" class="btn btn-secondary">Clear</a>
+  </form>
+</div>
+
+<!-- Employee Master Table -->
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Employee ID</th>
+          <th>Full Name</th>
+          <th>Department</th>
+          <th>Status</th>
+          <th>Currently Held Devices</th>
+          <th>Updated</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in employees %}
+        <tr>
+          <td class="mono"><b>{{ e.employee_id }}</b></td>
+          <td>{{ e.name }}</td>
+          <td>{{ e.department }}</td>
+          <td>
+            <span class="badge {{ 'badge-available' if e.active else 'badge-damaged' }}">
+              {{ 'Active' if e.active else 'Inactive' }}
+            </span>
+          </td>
+          <td>
+            {% if e.held_count > 0 %}
+            <span class="badge badge-issued">{{ e.held_count }} Device(s)</span>
+            <small class="mono text-muted" style="margin-left: 0.5rem;">{{ e.held_serials }}</small>
+            {% else %}
+            <span class="text-muted">None</span>
+            {% endif %}
+          </td>
+          <td style="font-size: 0.8rem;" class="text-muted">{{ e.updated_at }}</td>
+          <td>
+            <form method="post" action="/admin/employees/{{ e.employee_id }}/toggle" style="display: inline;">
+              <button class="btn btn-sm {{ 'btn-danger' if e.active else 'btn-success' }}" type="submit">
+                {{ 'Deactivate' if e.active else 'Activate' }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="7" class="text-muted">No employees found.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

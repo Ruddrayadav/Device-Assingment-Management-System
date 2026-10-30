@@ -1,0 +1,148 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.85rem; font-weight: 800;">Administrator Operations Center</h1>
+    <div class="text-muted">Active Shift: <b>{{ cur_shift }}</b> · Operational Date: <b>{{ cur_opdate }}</b></div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/reports/excel" class="btn btn-primary">📥 Download Full Excel Report</a>
+    <a href="/admin/shifts" class="btn btn-secondary">🔄 Shift Reconciliation</a>
+  </div>
+</div>
+
+<!-- Fleet Health KPIs -->
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Total Fleet</div>
+    <div class="kpi-value">{{ metrics.total_devices }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Available In Stock</div>
+    <div class="kpi-value" style="color: #34d399;">{{ metrics.available_devices }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Currently Issued</div>
+    <div class="kpi-value" style="color: #60a5fa;">{{ metrics.issued_devices }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Damaged / Repair</div>
+    <div class="kpi-value {{ 'alert' if metrics.damaged_devices + metrics.repair_devices > 0 else '' }}">
+      {{ metrics.damaged_devices + metrics.repair_devices }}
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Active Employees</div>
+    <div class="kpi-value">{{ metrics.active_employees }}</div>
+  </div>
+</div>
+
+<!-- Shift Reconciliation Alert Card -->
+<div class="card" style="border-left: 4px solid {{ '#ef4444' if reconciliation.discrepancy > 0 else '#10b981' }};">
+  <div class="card-title">
+    <span>Shift Reconciliation Overview ({{ cur_shift }} Shift · {{ cur_opdate }})</span>
+    <span class="badge {{ 'badge-damaged' if reconciliation.discrepancy > 0 else 'badge-available' }}">
+      {{ reconciliation.discrepancy }} Unreturned Discrepancies
+    </span>
+  </div>
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 1rem; margin-top: 0.5rem;">
+    <div>
+      <div class="text-muted" style="font-size: 0.8rem;">TOTAL ISSUED</div>
+      <div style="font-size: 1.5rem; font-weight: 700;">{{ reconciliation.total_issued }}</div>
+    </div>
+    <div>
+      <div class="text-muted" style="font-size: 0.8rem;">TOTAL RETURNED</div>
+      <div style="font-size: 1.5rem; font-weight: 700;">{{ reconciliation.total_returned }}</div>
+    </div>
+    <div>
+      <div class="text-muted" style="font-size: 0.8rem;">WORKING RETURNED</div>
+      <div style="font-size: 1.5rem; font-weight: 700; color: #34d399;">{{ reconciliation.working_returned }}</div>
+    </div>
+    <div>
+      <div class="text-muted" style="font-size: 0.8rem;">DAMAGED RETURNED</div>
+      <div style="font-size: 1.5rem; font-weight: 700; color: #f87171;">{{ reconciliation.damaged_returned }}</div>
+    </div>
+    <div>
+      <div class="text-muted" style="font-size: 0.8rem;">STILL WITH WORKERS</div>
+      <div style="font-size: 1.5rem; font-weight: 700; color: {{ '#f87171' if reconciliation.outstanding_count > 0 else 'inherit' }};">
+        {{ reconciliation.outstanding_count }}
+      </div>
+    </div>
+  </div>
+  <div class="mt-4">
+    <a href="/admin/shifts" class="btn btn-sm btn-secondary">View Outstanding Devices Breakdown →</a>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.5rem;">
+  <!-- Recent Audit Transactions -->
+  <div class="card">
+    <div class="card-title">
+      <span>Latest Transaction Records</span>
+      <a href="/admin/transactions" class="btn btn-sm btn-secondary">Full Audit Trail →</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Device Serial</th>
+            <th>Worker</th>
+            <th>Operator</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for t in recent_txs %}
+          <tr>
+            <td class="mono" style="font-size: 0.8rem;">{{ t.transaction_time.strftime('%H:%M:%S') }}</td>
+            <td>
+              <span class="badge {{ 'badge-issued' if t.transaction_type == 'Issue' else 'badge-available' }}">
+                {{ t.transaction_type }}
+              </span>
+            </td>
+            <td class="mono"><b>{{ t.serial }}</b></td>
+            <td>{{ t.employee_name }}</td>
+            <td>{{ t.operator_name }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="5" class="text-muted">No transactions recorded yet.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Open Damage Queue -->
+  <div class="card">
+    <div class="card-title">
+      <span>Open Damage Queue</span>
+      <a href="/admin/damage" class="btn btn-sm btn-secondary">Manage →</a>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Serial</th>
+            <th>Fault Type</th>
+            <th>Reported By</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for d in open_damage %}
+          <tr>
+            <td class="mono"><b>{{ d.serial[-6:] }}</b></td>
+            <td><span class="badge badge-damaged">{{ d.fault_type }}</span></td>
+            <td>{{ d.reported_by_name }}</td>
+          </tr>
+          {% else %}
+          <tr><td colspan="3" class="text-muted">Zero open damage reports. Fleet in good condition.</td></tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endblock %}
+

@@ -1,0 +1,11 @@
+{% extends "base.html" %}{% block body %}
+<div class="panel"><h2>Device inventory</h2>
+<form method="get" class="row no-print"><div class="field"><label>Search serial, status or employee</label><input name="q" value="{{ q }}"></div><button>Search</button><a class="btn secondary" href="{{ url_for('devices') }}">Clear</a><a class="btn secondary" href="{{ url_for('export_devices') }}">Export CSV</a></form>
+{% if session.get('role')=='admin' %}<hr><h3 style="margin-bottom:8px">Add or update a device</h3>
+<form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="row">
+<div class="field"><label>Serial / barcode *</label><input name="serial" required></div><div class="field"><label>Make</label><input name="make" value="CHAINWAY"></div><div class="field"><label>Model</label><input name="model" value="HHD"></div><div class="field"><label>Cover qty</label><input name="cover_qty" type="number" min="0" value="2"></div><div class="field" style="flex:0"><button>Save device</button></div></div></form>{% endif %}
+<div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>Serial</th><th>Make / model</th><th>Cover</th><th>Status</th><th>Employee</th><th>Department</th><th>Updated</th></tr></thead><tbody>
+{% for d in rows %}<tr><td class="mono">{{ d.serial }}</td><td>{{ d.make }} / {{ d.model }}</td><td>{{ d.cover_qty }}</td>
+<td><span class="pill"><i class="dot {{ 'go' if d.status=='Available' else 'stop' if d.status=='Issued' else 'hold' }}"></i>{{ 'Allotted' if d.status=='Issued' else d.status }}</span></td>
+<td>{{ d.employee_name or '—' }}</td><td>{{ d.department or '—' }}</td><td>{{ d.updated_at }}</td></tr>{% else %}<tr><td colspan="7">No devices found.</td></tr>{% endfor %}
+</tbody></table></div></div>{% endblock %}

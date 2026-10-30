@@ -1,0 +1,10 @@
+{% extends "base.html" %}{% block body %}
+<div class="panel"><h2>Employee master</h2>
+<form method="get" class="row no-print"><div class="field"><label>Search ID, name or department</label><input name="q" value="{{ q }}"></div><button>Search</button><a class="btn secondary" href="{{ url_for('employees') }}">Clear</a><a class="btn secondary" href="{{ url_for('export_employees') }}">Export CSV</a></form>
+{% if session.get('role')=='admin' %}<hr><h3 style="margin-bottom:8px">Add or update an employee</h3>
+<form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><div class="row">
+<div class="field"><label>Employee ID / barcode *</label><input name="employee_id" required value="{{ prefill }}" {{ 'autofocus' if prefill }}></div><div class="field"><label>Name *</label><input name="name" required {{ 'autofocus' if prefill }}></div><div class="field"><label>Department *</label><input name="department" required></div><div class="field" style="flex:0"><button>Save employee</button></div></div></form>{% endif %}
+<div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>Employee ID</th><th>Name</th><th>Department</th><th>Active</th><th>Holding now</th>{% if session.get('role')=='admin' %}<th></th>{% endif %}</tr></thead><tbody>
+{% for e in rows %}<tr><td class="mono">{{ e.employee_id }}</td><td>{{ e.name }}</td><td>{{ e.department }}</td><td>{{ 'Yes' if e.active else 'No' }}</td><td class="mono">{{ e.devices or '—' }}</td>
+{% if session.get('role')=='admin' %}<td><form method="post" action="{{ url_for('employee_toggle', eid=e.employee_id) }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button class="secondary">{{ 'Deactivate' if e.active else 'Activate' }}</button></form></td>{% endif %}</tr>
+{% else %}<tr><td colspan="6">No employees found.</td></tr>{% endfor %}</tbody></table></div></div>{% endblock %}

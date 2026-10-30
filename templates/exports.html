@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block body %}
+<div class="panel"><h2>Reports and backup</h2><p>Excel-compatible CSV exports.</p><div class="row">
+<a class="btn" href="{{ url_for('export_transactions') }}">Transactions</a><a class="btn" href="{{ url_for('export_devices') }}">Inventory</a><a class="btn" href="{{ url_for('export_employees') }}">Employees</a><a class="btn" href="{{ url_for('export_damage') }}">Damage / missing</a></div>
+{% if session.get('role')=='admin' %}<hr><h3>Database backup</h3><p class="muted">Backups contain employee and transaction data. Store them in an access-controlled location.</p>
+<form method="post" action="{{ url_for('make_backup') }}"><input type="hidden" name="_csrf" value="{{ csrf_token() }}"><button>Run backup now</button></form>
+<h3 style="margin-top:14px">Recent backups</h3><ul>{% for f in files %}<li class="mono">{{ f }}</li>{% else %}<li>No backups yet.</li>{% endfor %}</ul>{% endif %}</div>{% endblock %}

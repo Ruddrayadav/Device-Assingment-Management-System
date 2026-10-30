@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.5rem;">
+  <div>
+    <h1 style="font-size: 1.85rem; font-weight: 800;">Management Reports & Excel Export</h1>
+    <div class="text-muted">Generate comprehensive Excel spreadsheets (.xlsx) and CSV exports directly from live records</div>
+  </div>
+</div>
+
+<!-- Excel 5-Sheet Report Builder -->
+<div class="card" style="border: 2px solid var(--primary); padding: 1.5rem;">
+  <div class="card-title" style="font-size: 1.3rem;">
+    <span>📊 Comprehensive 5-Sheet Excel Workbook (.xlsx)</span>
+  </div>
+  <p class="text-muted" style="margin-bottom: 1.25rem;">
+    Builds a fully formatted, styled Excel workbook formatted for management review and warehouse audit.
+  </p>
+
+  <form method="get" action="/reports/excel" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 1rem; align-items: flex-end;">
+    <div class="form-group">
+      <label for="start_date">Start Date</label>
+      <input id="start_date" name="start_date" type="date">
+    </div>
+    <div class="form-group">
+      <label for="end_date">End Date</label>
+      <input id="end_date" name="end_date" type="date">
+    </div>
+    <div class="form-group">
+      <label for="shift_name">Shift Filter</label>
+      <select id="shift_name" name="shift_name">
+        <option value="All">All Shifts</option>
+        <option value="Morning">Morning</option>
+        <option value="Evening">Evening</option>
+        <option value="Night">Night</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit" style="padding: 0.65rem 1.25rem; font-size: 1rem;">
+      📥 Generate & Download Excel
+    </button>
+  </form>
+
+  <div style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+    <div style="font-weight: 600; margin-bottom: 0.5rem;">Sheets Included in Downloaded File:</div>
+    <ul style="padding-left: 1.25rem; font-size: 0.875rem; color: var(--text-muted); line-height: 1.7;">
+      <li><b>Sheet 1: Daily Summary</b> — Issued, Returned, Working, Damaged, Missing, Outstanding per operational date</li>
+      <li><b>Sheet 2: Transaction Details</b> — Timestamp, Shift, Operator, Worker ID/Name, Department, Serial, Action, Remarks</li>
+      <li><b>Sheet 3: Damage Reports</b> — Fault types, employee link, description, reporter, review and repair status</li>
+      <li><b>Sheet 4: Outstanding Devices</b> — Real-time list of all devices currently with workers (unreturned)</li>
+      <li><b>Sheet 5: Shift Summary</b> — Morning, Evening and Night shifts breakdown and unreturned discrepancies</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Raw CSV Exports -->
+<div class="card mt-4">
+  <div class="card-title">Quick CSV Exports</div>
+  <p class="text-muted" style="margin-bottom: 1rem;">
+    Single table CSV files suitable for external ERP systems, PowerBI, or raw data pipelines:
+  </p>
+  <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+    <a href="/reports/csv/devices" class="btn btn-secondary">📱 Device Inventory CSV</a>
+    <a href="/reports/csv/employees" class="btn btn-secondary">👷 Employee Master CSV</a>
+    <a href="/reports/csv/transactions" class="btn btn-secondary">📜 Transaction Audit CSV</a>
+    <a href="/reports/csv/damage" class="btn btn-secondary">⚠️ Damage Reports CSV</a>
+  </div>
+</div>
+{% endblock %}
+

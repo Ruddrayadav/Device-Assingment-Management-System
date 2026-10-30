@@ -1,0 +1,85 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Database Backups & Disaster Recovery</h1>
+    <div class="text-muted">Atomic online SQLite snapshots, integrity verification, and safe rollback</div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: 1fr 2fr; gap: 1.25rem; margin-bottom: 1.5rem;">
+  <!-- Trigger Backup Card -->
+  <div class="card">
+    <div class="card-title">Run Safe Backup Now</div>
+    <p class="text-muted" style="font-size: 0.85rem; margin-bottom: 1rem;">
+      Uses SQLite's non-blocking online backup API. Safe to run at any moment without interrupting operators scanning on the warehouse floor.
+    </p>
+    <form method="post" action="/admin/backups/create">
+      <div class="form-group" style="margin-bottom: 1rem;">
+        <label for="custom_tag">Backup Tag / Note (Optional)</label>
+        <input id="custom_tag" name="custom_tag" placeholder="e.g. pre_shift_morning">
+      </div>
+      <button class="btn btn-primary" type="submit" style="width: 100%;">
+        💾 Create Database Snapshot
+      </button>
+    </form>
+  </div>
+
+  <!-- Best Practices & Automation -->
+  <div class="card">
+    <div class="card-title">Warehouse Reliability & Disaster Recovery</div>
+    <ul style="font-size: 0.875rem; color: var(--text-muted); line-height: 1.7; padding-left: 1.25rem;">
+      <li><b>Online Non-Blocking:</b> Database snapshots capture transactions without halting or corrupting in-flight scans.</li>
+      <li><b>Automatic Safety Copy:</b> If you restore an old backup, the system automatically saves a safety copy of the current database before replacing it.</li>
+      <li><b>Integrity Checked:</b> Restores are verified using SQLite <code class="mono">PRAGMA integrity_check</code> before being applied.</li>
+      <li><b>Windows Task Scheduler:</b> Configure Windows Task Scheduler to run daily copies of the <code class="mono">backups/</code> folder to an external network share or drive.</li>
+    </ul>
+  </div>
+</div>
+
+<!-- Backups List -->
+<div class="card">
+  <div class="card-title">
+    <span>Available Snapshots ({{ backups|length }})</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Snapshot File</th>
+          <th>Size</th>
+          <th>Created Timestamp</th>
+          <th>Download</th>
+          <th>Restore Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for b in backups %}
+        <tr>
+          <td class="mono"><b>{{ b.filename }}</b></td>
+          <td>{{ b.size_kb }} KB</td>
+          <td class="mono" style="font-size: 0.8rem;">{{ b.created_at }}</td>
+          <td>
+            <a href="/admin/backups/download/{{ b.filename }}" class="btn btn-sm btn-secondary">
+              📥 Download .db
+            </a>
+          </td>
+          <td>
+            <form method="post" action="/admin/backups/restore" onsubmit="return confirm('WARNING: Are you sure you want to restore database from snapshot {{ b.filename }}? Current live data will be rolled back.');" style="display: inline;">
+              <input type="hidden" name="filename" value="{{ b.filename }}">
+              <button class="btn btn-sm btn-danger" type="submit">Restore DB</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="text-muted">No backup snapshots exist yet. Create one above!</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

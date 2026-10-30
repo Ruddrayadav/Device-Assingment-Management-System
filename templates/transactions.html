@@ -1,0 +1,9 @@
+{% extends "base.html" %}{% block body %}
+<div class="panel"><h2>Transaction audit history</h2>
+<form method="get" class="row no-print"><div class="field"><label>Search serial, employee, operator or department</label><input name="q" value="{{ q }}"></div>
+<div class="field" style="flex:0;min-width:140px"><label>Type</label><select name="type"><option value="">All</option>{% for x in ['Handover','Takeover'] %}<option {{ 'selected' if typ==x }}>{{ x }}</option>{% endfor %}</select></div>
+<button>Filter</button><a class="btn secondary" href="{{ url_for('export_transactions') }}">Export CSV</a><button type="button" class="secondary" onclick="window.print()">Print</button></form>
+<div class="tablewrap" style="margin-top:12px"><table><thead><tr><th>ID</th><th>Date / time</th><th>Type</th><th>Serial</th><th>Employee ID</th><th>Employee</th><th>Department</th><th>Condition</th><th>Cover</th><th>Operator</th><th>Remarks</th></tr></thead><tbody>
+{% for t in rows %}<tr><td>{{ t.id }}</td><td>{{ t.transaction_time }}</td><td><span class="pill"><i class="dot {{ 'stop' if t.transaction_type=='Handover' else 'go' }}"></i>{{ t.transaction_type }}</span></td><td class="mono">{{ t.serial }}</td><td>{{ t.employee_id }}</td><td>{{ t.employee_name }}</td><td>{{ t.department }}</td><td>{{ t.condition }}</td><td>{{ t.cover_qty }}</td><td>{{ t.operator }}</td><td>{{ t.remarks }}</td></tr>
+{% else %}<tr><td colspan="11">No transactions found.</td></tr>{% endfor %}</tbody></table></div>
+<p class="muted">Audit records are append-only in the application.</p></div>{% endblock %}

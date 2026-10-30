@@ -1,0 +1,202 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+  .board-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 1.5rem;
+  }
+  .device-tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 0.75rem;
+  }
+  .device-tile {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0.75rem;
+    font-size: 0.85rem;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+  .device-tile.issued {
+    border-left: 4px solid var(--primary);
+  }
+  .device-tile.available {
+    border-left: 4px solid #10b981;
+  }
+  .device-tile.unavailable {
+    border-left: 4px solid #ef4444;
+  }
+  .tile-serial {
+    font-family: var(--font-mono);
+    font-weight: 700;
+    font-size: 1rem;
+    margin-bottom: 0.25rem;
+  }
+  .tile-user {
+    font-weight: 600;
+    color: var(--text-main);
+  }
+  .tile-dept {
+    font-size: 0.75rem;
+    color: var(--text-muted);
+  }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Warehouse Live Device Board</h1>
+    <div class="text-muted">Auto-refreshes every 3 seconds · Real-time warehouse LAN feed</div>
+  </div>
+  <div style="font-size: 0.9rem;" id="board-clock" class="mono text-muted"></div>
+</div>
+
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Available</div>
+    <div class="kpi-value" style="color: #34d399;" id="k-avail">{{ board.counts.available }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Allotted</div>
+    <div class="kpi-value" style="color: #60a5fa;" id="k-allot">{{ board.counts.allotted }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Not Handed Over Today</div>
+    <div class="kpi-value" id="k-not-today">{{ board.counts.not_today }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Damaged / Repair</div>
+    <div class="kpi-value" style="color: #f87171;" id="k-issues">{{ board.counts.unavailable }}</div>
+  </div>
+</div>
+
+<div class="board-grid">
+  <!-- Available Column -->
+  <div class="card">
+    <div class="card-title">
+      <span style="color: #34d399;">✓ Available Devices (<span id="count-avail">{{ board.available|length }}</span>)</span>
+    </div>
+    <div class="device-tile-grid" id="avail-container">
+      {% for d in board.available %}
+      <div class="device-tile available">
+        <div class="tile-serial">{{ d.serial[-6:] }}</div>
+        <div class="text-muted mono" style="font-size: 0.7rem;">{{ d.serial }}</div>
+        <div class="tile-dept mt-3">Ready in stock</div>
+      </div>
+      {% else %}
+      <div class="text-muted">No devices available currently.</div>
+      {% endfor %}
+    </div>
+  </div>
+
+  <!-- Allotted Column -->
+  <div class="card">
+    <div class="card-title">
+      <span style="color: #60a5fa;">⏳ Allotted Devices (<span id="count-allot">{{ board.allotted|length }}</span>)</span>
+    </div>
+    <div class="device-tile-grid" id="allot-container">
+      {% for d in board.allotted %}
+      <div class="device-tile issued">
+        <div class="tile-serial">{{ d.serial[-6:] }}</div>
+        <div class="tile-user">{{ d.ename }}</div>
+        <div class="tile-dept">{{ d.dept }}</div>
+        <div class="text-muted mono mt-3" style="font-size: 0.7rem;">{{ d.serial }}</div>
+      </div>
+      {% else %}
+      <div class="text-muted">No devices currently allotted.</div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
+<!-- Not Handed Over Today -->
+<div class="card mt-4">
+  <div class="card-title">
+    <span>⚠️ Held Over / Idle Devices (Not Handed Over Today)</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Serial</th>
+          <th>Status</th>
+          <th>Assigned Worker</th>
+          <th>Department</th>
+          <th>Last Transaction</th>
+        </tr>
+      </thead>
+      <tbody id="not-today-body">
+        {% for d in board.not_today %}
+        <tr>
+          <td class="mono"><b>{{ d.serial }}</b></td>
+          <td>
+            <span class="badge {{ 'badge-issued' if d.status == 'Issued' else 'badge-available' }}">
+              {{ d.status }}
+            </span>
+          </td>
+          <td>{{ d.ename or 'In Stock' }}</td>
+          <td>{{ d.dept or '—' }}</td>
+          <td class="mono">{{ d.last_ho or 'Never' }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="5" class="text-muted">Every device in the warehouse was handled today.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  let currentVersion = '{{ board.version }}';
+
+  async function pollBoard() {
+    try {
+      const res = await fetch(`/api/board/live?v=${encodeURIComponent(currentVersion)}`);
+      const data = await res.json();
+      if (data.changed && data.board) {
+        currentVersion = data.board.version;
+        document.getElementById('k-avail').textContent = data.board.counts.available;
+        document.getElementById('k-allot').textContent = data.board.counts.allotted;
+        document.getElementById('k-not-today').textContent = data.board.counts.not_today;
+        document.getElementById('k-issues').textContent = data.board.counts.unavailable;
+        document.getElementById('count-avail').textContent = data.board.available.length;
+        document.getElementById('count-allot').textContent = data.board.allotted.length;
+
+        // Render Available
+        const availHtml = data.board.available.map(d => `
+          <div class="device-tile available">
+            <div class="tile-serial">${d.serial.slice(-6)}</div>
+            <div class="text-muted mono" style="font-size: 0.7rem;">${d.serial}</div>
+            <div class="tile-dept mt-3">Ready in stock</div>
+          </div>
+        `).join('') || '<div class="text-muted">No devices available currently.</div>';
+        document.getElementById('avail-container').innerHTML = availHtml;
+
+        // Render Allotted
+        const allotHtml = data.board.allotted.map(d => `
+          <div class="device-tile issued">
+            <div class="tile-serial">${d.serial.slice(-6)}</div>
+            <div class="tile-user">${d.ename || d.eid}</div>
+            <div class="tile-dept">${d.dept || ''}</div>
+            <div class="text-muted mono mt-3" style="font-size: 0.7rem;">${d.serial}</div>
+          </div>
+        `).join('') || '<div class="text-muted">No devices currently allotted.</div>';
+        document.getElementById('allot-container').innerHTML = allotHtml;
+      }
+    } catch (e) {}
+  }
+
+  setInterval(pollBoard, 3000);
+</script>
+{% endblock %}
+

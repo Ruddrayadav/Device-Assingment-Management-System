@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ title or "HHD Device Management System" }}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  {% if not hide_nav %}
+  <header class="top-nav">
+    <div class="brand">
+      <span>📦 HHD Manager</span>
+      <span class="brand-badge">Warehouse LAN</span>
+    </div>
+
+    {% if user %}
+    <nav class="nav-links">
+      <a href="/" class="{{ 'active' if request.url.path == '/' }}">⚡ Scan Station</a>
+      <a href="/board" class="{{ 'active' if request.url.path == '/board' }}" target="_blank">📺 Live Board</a>
+      
+      {% if user.role == 'admin' %}
+      <a href="/admin" class="{{ 'active' if request.url.path == '/admin' }}">📊 Dashboard</a>
+      <a href="/admin/devices" class="{{ 'active' if request.url.path.startswith('/admin/devices') }}">📱 Devices</a>
+      <a href="/admin/employees" class="{{ 'active' if request.url.path.startswith('/admin/employees') }}">👷 Employees</a>
+      <a href="/admin/shifts" class="{{ 'active' if request.url.path.startswith('/admin/shifts') }}">🔄 Reconciliation</a>
+      <a href="/admin/transactions" class="{{ 'active' if request.url.path.startswith('/admin/transactions') }}">📜 Audit</a>
+      <a href="/admin/damage" class="{{ 'active' if request.url.path.startswith('/admin/damage') }}">⚠️ Damage</a>
+      <a href="/admin/reports" class="{{ 'active' if request.url.path.startswith('/admin/reports') }}">📥 Reports</a>
+      <a href="/admin/users" class="{{ 'active' if request.url.path.startswith('/admin/users') }}">👥 Users</a>
+      <a href="/admin/backups" class="{{ 'active' if request.url.path.startswith('/admin/backups') }}">💾 Backups</a>
+      {% endif %}
+    </nav>
+
+    <div class="user-info">
+      <button class="btn btn-sm btn-secondary" id="sound-toggle" type="button">🔊 Sound On</button>
+      <span class="shift-tag">Shift: {{ active_shift or user.default_shift }}</span>
+      <span><b>{{ user.full_name or user.username }}</b> ({{ user.role }})</span>
+      <a href="/logout" class="btn btn-sm btn-secondary">Sign Out</a>
+    </div>
+    {% endif %}
+  </header>
+  {% endif %}
+
+  <main class="container">
+    {% if request.query_params.get('msg') %}
+    <div class="flash success">
+      ✓ {{ request.query_params.get('msg') }}
+    </div>
+    {% endif %}
+
+    {% if request.query_params.get('error') %}
+    <div class="flash error">
+      ✗ {{ request.query_params.get('error') }}
+    </div>
+    {% endif %}
+
+    {% block content %}{% endblock %}
+  </main>
+
+  {% block scripts %}{% endblock %}
+</body>
+</html>
+

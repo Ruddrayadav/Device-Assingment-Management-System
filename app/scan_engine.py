@@ -1,0 +1,526 @@
+import re
+from datetime import datetime
+from typing import Optional, Dict, Any, Tuple
+from sqlalchemy.orm import Session
+from sqlalchemy import func, or_
+from app.database import SCAN_WRITE_LOCK
+from app.models import (
+    Device, Employee, DeviceAssignment, Transaction,
+    DamageReport, User, ShiftLog
+)
+from app.shifts import get_current_shift_and_op_date, get_operational_date_for_shift
+from app.config import DAMAGE_CATEGORIES
+
+class ScanException(Exception):
+    def __init__(self, message: str, title: str = "Scan Rejected", code: str = None):
+        super().__init__(message)
+        self.message = message
+        self.title = title
+        self.code = code
+
+def sanitize_code(code: str) -> str:
+    if not code:
+        return ""
+    # Strip non-printable and control characters
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(code)).strip()
+    return cleaned[:64]
+
+def resolve_barcode(db: Session, code: str, prefer_type: Optional[str] = None) -> Tuple[Optional[Device], Optional[Employee]]:
+    """
+    Resolves barcode to Device or Employee.
+    Supports exact match and typed last-digits match for devices (minimum 4 digits).
+    """
+    code_clean = sanitize_code(code)
+    if not code_clean:
+        return None, None
+
+    # Exact employee search
+    emp = db.query(Employee).filter(func.lower(Employee.employee_id) == code_clean.lower()).first()
+
+    # Exact device search
+    dev = db.query(Device).filter(func.lower(Device.serial) == code_clean.lower()).first()
+
+    # If not found exact device, check suffix if >= 4 chars
+    if not dev and len(code_clean) >= 4:
+        matches = db.query(Device).filter(Device.serial.ilike(f"%{code_clean}")).limit(2).all()
+        if len(matches) == 1:
+            dev = matches[0]
+
+    # Conflict resolution if both match
+    if emp and dev:
+        if prefer_type == "device":
+            return dev, None
+        elif prefer_type == "employee":
+            return None, emp
+        else:
+            # By default prefer exact serial length
+            if len(dev.serial) == len(code_clean):
+                return dev, None
+            return None, emp
+
+    return dev, emp
+
+def issue_device_atomic(
+    db: Session,
+    device_serial: str,
+    employee_id: str,
+    operator: User,
+    active_shift: Optional[str] = None,
+    idempotency_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Atomically issues a device to an employee with thread and database level protection.
+    Guarantees zero duplicate allocations.
+    """
+    with SCAN_WRITE_LOCK:
+        # Check idempotency
+        if idempotency_key:
+            existing_tx = db.query(Transaction).filter(Transaction.idempotency_key == idempotency_key).first()
+            if existing_tx:
+                return {
+                    "action": "Issue",
+                    "serial": existing_tx.serial,
+                    "employee": {"id": existing_tx.employee_id, "name": existing_tx.employee_name, "dept": existing_tx.department},
+                    "message": f"Device {existing_tx.serial} already issued to {existing_tx.employee_name}."
+                }
+
+        # 1. Validate employee
+        emp = db.query(Employee).filter(Employee.employee_id == employee_id).first()
+        if not emp:
+            raise ScanException("Employee ID not found in Master records.", "Employee Not Found")
+        if not emp.active:
+            raise ScanException(f"{emp.name} ({emp.employee_id}) is INACTIVE. Contact Administrator.", "Employee Inactive")
+
+        # 2. Lock & Validate device
+        dev = db.query(Device).filter(Device.serial == device_serial).with_for_update().first()
+        if not dev:
+            raise ScanException("Device serial not found in Inventory.", "Device Not Found")
+
+        if dev.status == "Issued":
+            holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
+            holder_name = holder.name if holder else dev.assigned_employee_id
+            raise ScanException(
+                f"Device {dev.serial} is ALREADY ISSUED to {holder_name} ({dev.assigned_employee_id}). Return it first.",
+                "Device Already Issued"
+            )
+
+        if dev.status != "Available":
+            raise ScanException(
+                f"Device {dev.serial} is marked as '{dev.status}' and cannot be issued.",
+                "Device Unavailable"
+            )
+
+        now = datetime.now()
+        shift_name, op_date = get_current_shift_and_op_date(now)
+        if active_shift:
+            shift_name = active_shift
+            op_date = get_operational_date_for_shift(active_shift, now)
+
+        # 3. Create DeviceAssignment record
+        assignment = DeviceAssignment(
+            device_serial=dev.serial,
+            employee_id=emp.employee_id,
+            issued_at=now,
+            issued_by_operator_id=operator.id,
+            issued_by_operator_name=operator.full_name or operator.username,
+            issued_shift=shift_name,
+            issued_operational_date=op_date,
+            status="ACTIVE"
+        )
+        db.add(assignment)
+
+        # 4. Update Device state
+        dev.status = "Issued"
+        dev.assigned_employee_id = emp.employee_id
+        dev.condition = "Working"
+        dev.updated_at = now
+
+        # 5. Insert Transaction audit record
+        tx = Transaction(
+            transaction_time=now,
+            operational_date=op_date,
+            shift_name=shift_name,
+            transaction_type="Issue",
+            serial=dev.serial,
+            employee_id=emp.employee_id,
+            employee_name=emp.name,
+            department=emp.department,
+            operator_id=operator.id,
+            operator_name=operator.full_name or operator.username,
+            condition="Working",
+            cover_qty=dev.cover_qty,
+            remarks="Normal Issue",
+            idempotency_key=idempotency_key
+        )
+        db.add(tx)
+
+        db.commit()
+
+        # Count how many devices this employee currently holds
+        held_count = db.query(Device).filter(
+            Device.assigned_employee_id == emp.employee_id,
+            Device.status == "Issued"
+        ).count()
+
+        return {
+            "action": "Issue",
+            "serial": dev.serial,
+            "employee": {
+                "id": emp.employee_id,
+                "name": emp.name,
+                "dept": emp.department,
+                "held_count": held_count
+            },
+            "device": {
+                "serial": dev.serial,
+                "model": dev.model,
+                "cover_qty": dev.cover_qty
+            },
+            "shift": shift_name,
+            "operational_date": op_date,
+            "message": f"Issued to {emp.name} ({emp.department})" + (f" · Now holds {held_count} devices" if held_count > 1 else "")
+        }
+
+def return_device_atomic(
+    db: Session,
+    device_serial: str,
+    operator: User,
+    condition: str = "Working",
+    damage_type: Optional[str] = None,
+    remarks: str = "",
+    active_shift: Optional[str] = None,
+    idempotency_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Atomically returns a device from whichever worker currently holds it.
+    Zero need to scan employee ID again.
+    """
+    with SCAN_WRITE_LOCK:
+        # Check idempotency
+        if idempotency_key:
+            existing_tx = db.query(Transaction).filter(Transaction.idempotency_key == idempotency_key).first()
+            if existing_tx:
+                return {
+                    "action": "Return",
+                    "serial": existing_tx.serial,
+                    "employee": {"id": existing_tx.employee_id, "name": existing_tx.employee_name, "dept": existing_tx.department},
+                    "message": f"Device {existing_tx.serial} already returned."
+                }
+
+        dev = db.query(Device).filter(Device.serial == device_serial).with_for_update().first()
+        if not dev:
+            raise ScanException("Device serial not found in Inventory.", "Device Not Found")
+
+        if dev.status != "Issued":
+            raise ScanException(
+                f"Device {dev.serial} is NOT ISSUED (Current status: {dev.status}). Nothing to return.",
+                "Device Not Issued"
+            )
+
+        emp = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
+        emp_name = emp.name if emp else "Unknown Worker"
+        emp_dept = emp.department if emp else "Warehouse"
+        emp_id = emp.employee_id if emp else (dev.assigned_employee_id or "UNKNOWN")
+
+        now = datetime.now()
+        shift_name, op_date = get_current_shift_and_op_date(now)
+        if active_shift:
+            shift_name = active_shift
+            op_date = get_operational_date_for_shift(active_shift, now)
+
+        # 1. Update active DeviceAssignment
+        asgn = db.query(DeviceAssignment).filter(
+            DeviceAssignment.device_serial == dev.serial,
+            DeviceAssignment.status == "ACTIVE"
+        ).order_by(DeviceAssignment.id.desc()).first()
+
+        final_condition = condition
+        if damage_type:
+            final_condition = damage_type
+
+        if asgn:
+            asgn.returned_at = now
+            asgn.returned_by_operator_id = operator.id
+            asgn.returned_by_operator_name = operator.full_name or operator.username
+            asgn.returned_shift = shift_name
+            asgn.returned_operational_date = op_date
+            asgn.status = "RETURNED"
+            asgn.condition_on_return = final_condition
+            asgn.remarks = remarks
+
+        # 2. Update Device status
+        if final_condition == "Working":
+            dev.status = "Available"
+            dev.condition = "Working"
+        else:
+            dev.status = "Damaged" if final_condition in DAMAGE_CATEGORIES or final_condition == "Damaged" else final_condition
+            dev.condition = final_condition
+
+        dev.assigned_employee_id = None
+        dev.updated_at = now
+
+        # 3. Record DamageReport if damaged
+        if final_condition != "Working":
+            dmg = DamageReport(
+                report_time=now,
+                operational_date=op_date,
+                shift_name=shift_name,
+                serial=dev.serial,
+                employee_id=emp_id,
+                employee_name=emp_name,
+                department=emp_dept,
+                fault_type=damage_type or final_condition,
+                details=remarks or "Reported during return",
+                reported_by_id=operator.id,
+                reported_by_name=operator.full_name or operator.username,
+                review_status="Open"
+            )
+            db.add(dmg)
+
+        # 4. Record Transaction
+        tx = Transaction(
+            transaction_time=now,
+            operational_date=op_date,
+            shift_name=shift_name,
+            transaction_type="Return",
+            serial=dev.serial,
+            employee_id=emp_id,
+            employee_name=emp_name,
+            department=emp_dept,
+            operator_id=operator.id,
+            operator_name=operator.full_name or operator.username,
+            condition=final_condition,
+            cover_qty=dev.cover_qty,
+            remarks=remarks or (f"Returned condition: {final_condition}"),
+            idempotency_key=idempotency_key
+        )
+        db.add(tx)
+
+        db.commit()
+
+        return {
+            "action": "Return",
+            "serial": dev.serial,
+            "condition": final_condition,
+            "employee": {
+                "id": emp_id,
+                "name": emp_name,
+                "dept": emp_dept
+            },
+            "device": {
+                "serial": dev.serial,
+                "status": dev.status,
+                "condition": dev.condition
+            },
+            "shift": shift_name,
+            "operational_date": op_date,
+            "message": f"Returned from {emp_name} ({emp_dept})" + ("" if final_condition == "Working" else f" · Marked {final_condition}")
+        }
+
+def process_scan_pipeline(
+    db: Session,
+    code: str,
+    mode: str,
+    pending: Optional[Dict[str, str]],
+    operator: User,
+    active_shift: Optional[str] = None,
+    idempotency_key: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    High-speed, zero-enter unified scan pipeline.
+    Resolves code, manages pending state, executes atomic actions without page reload.
+    """
+    code = sanitize_code(code)
+    if not code:
+        return {
+            "ok": False,
+            "state": "error",
+            "title": "Empty Scan",
+            "message": "No barcode detected.",
+            "pending": pending
+        }
+
+    p_type = pending.get("type") if pending else None
+    p_code = sanitize_code(pending.get("code")) if pending else None
+
+    # Resolve barcode identity
+    prefer = "device" if p_type == "employee" else ("employee" if p_type == "device" else None)
+    dev, emp = resolve_barcode(db, code, prefer_type=prefer)
+
+    # Unknown barcode check
+    if not dev and not emp:
+        return {
+            "ok": False,
+            "state": "unknown",
+            "title": "Unknown Barcode",
+            "message": f"'{code}' is not recognized as a registered device or employee ID.",
+            "code": code,
+            "pending": pending,
+            "can_add": operator.role == "admin"
+        }
+
+    # -------------------------------------------------------------
+    # RETURN MODE WORKFLOW: One-scan instant return
+    # -------------------------------------------------------------
+    if mode == "Return":
+        if emp and not dev:
+            return {
+                "ok": False,
+                "state": "error",
+                "title": "Worker Scanned in Return Mode",
+                "message": f"Scanned employee '{emp.name}'. In Return mode, scan ONLY the DEVICE barcode.",
+                "pending": None
+            }
+        # dev is present
+        try:
+            res = return_device_atomic(
+                db=db,
+                device_serial=dev.serial,
+                operator=operator,
+                condition="Working",
+                active_shift=active_shift,
+                idempotency_key=idempotency_key
+            )
+            return {
+                "ok": True,
+                "state": "done",
+                "title": f"Device Returned · {dev.serial[-6:]}",
+                "message": res["message"],
+                "action": "Return",
+                "device": res["device"],
+                "employee": res["employee"],
+                "can_flag": True,
+                "pending": None
+            }
+        except ScanException as ex:
+            return {
+                "ok": False,
+                "state": "error",
+                "title": ex.title,
+                "message": ex.message,
+                "pending": None
+            }
+
+    # -------------------------------------------------------------
+    # ISSUE MODE WORKFLOW: Automatic Employee-Device Linking
+    # -------------------------------------------------------------
+    try:
+        # Case 1: Device scanned
+        if dev:
+            # If device is already issued, scan alone in Issue mode gives clear guidance
+            if dev.status == "Issued":
+                # Quick take back or clear message
+                holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
+                holder_name = holder.name if holder else dev.assigned_employee_id
+                return {
+                    "ok": False,
+                    "state": "error",
+                    "title": "Already Issued",
+                    "message": f"Device {dev.serial} is already with {holder_name}. Switch to Return mode to take it back.",
+                    "pending": pending
+                }
+
+            if dev.status != "Available":
+                return {
+                    "ok": False,
+                    "state": "error",
+                    "title": f"Device {dev.status}",
+                    "message": f"Device {dev.serial} is marked as '{dev.status}' and cannot be issued.",
+                    "pending": pending
+                }
+
+            # If an employee was already pending, COMPLETE THE ISSUE IMMEDIATELY!
+            if p_type == "employee" and p_code:
+                res = issue_device_atomic(
+                    db=db,
+                    device_serial=dev.serial,
+                    employee_id=p_code,
+                    operator=operator,
+                    active_shift=active_shift,
+                    idempotency_key=idempotency_key
+                )
+                return {
+                    "ok": True,
+                    "state": "done",
+                    "title": f"Issued · {dev.serial[-6:]}",
+                    "message": res["message"],
+                    "action": "Issue",
+                    "device": res["device"],
+                    "employee": res["employee"],
+                    "pending": None
+                }
+            else:
+                # Store device as pending, wait for employee scan
+                return {
+                    "ok": True,
+                    "state": "pending",
+                    "title": f"Device Ready · {dev.serial[-6:]}",
+                    "message": f"Device {dev.serial} ready ({dev.model}). Now scan Worker ID barcode.",
+                    "action": "PendingDevice",
+                    "pending": {
+                        "type": "device",
+                        "code": dev.serial,
+                        "label": f"Device: {dev.serial}"
+                    }
+                }
+
+        # Case 2: Employee scanned
+        if emp:
+            if not emp.active:
+                return {
+                    "ok": False,
+                    "state": "error",
+                    "title": "Employee Inactive",
+                    "message": f"{emp.name} ({emp.employee_id}) is marked INACTIVE. Contact Administrator.",
+                    "pending": pending
+                }
+
+            # If a device was already pending, COMPLETE THE ISSUE IMMEDIATELY!
+            if p_type == "device" and p_code:
+                res = issue_device_atomic(
+                    db=db,
+                    device_serial=p_code,
+                    employee_id=emp.employee_id,
+                    operator=operator,
+                    active_shift=active_shift,
+                    idempotency_key=idempotency_key
+                )
+                return {
+                    "ok": True,
+                    "state": "done",
+                    "title": f"Issued · {p_code[-6:]}",
+                    "message": res["message"],
+                    "action": "Issue",
+                    "device": res["device"],
+                    "employee": res["employee"],
+                    "pending": None
+                }
+            else:
+                # Count current held devices
+                held = db.query(Device).filter(
+                    Device.assigned_employee_id == emp.employee_id,
+                    Device.status == "Issued"
+                ).count()
+                held_str = f" · Currently holds {held} device{'s' if held != 1 else ''}" if held > 0 else " · Holds 0 devices"
+                return {
+                    "ok": True,
+                    "state": "pending",
+                    "title": f"Worker: {emp.name}",
+                    "message": f"{emp.name} · {emp.department}{held_str}. Now scan Device barcode.",
+                    "action": "PendingEmployee",
+                    "pending": {
+                        "type": "employee",
+                        "code": emp.employee_id,
+                        "label": f"{emp.name} ({emp.department})"
+                    }
+                }
+
+    except ScanException as ex:
+        return {
+            "ok": False,
+            "state": "error",
+            "title": ex.title,
+            "message": ex.message,
+            "pending": pending
+        }
+

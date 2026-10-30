@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block body %}
+<div class="panel login"><h2>Sign in</h2>
+<form method="post"><input type="hidden" name="_csrf" value="{{ csrf_token() }}">
+<div class="field"><label>Username</label><input name="username" required autofocus autocomplete="username"></div>
+<div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password"></div>
+<button>Sign in</button> <a class="btn secondary" href="{{ url_for('board') }}">View device board</a></form></div>{% endblock %}

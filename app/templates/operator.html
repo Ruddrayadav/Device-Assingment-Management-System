@@ -1,0 +1,138 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="scan-station">
+  <!-- Mode Selector -->
+  <div class="mode-bar">
+    <button class="mode-btn active-issue" id="btn-mode-issue" type="button">
+      ⚡ ISSUE MODE (F2)
+      <div style="font-size: 0.8rem; font-weight: normal; margin-top: 0.2rem; opacity: 0.85;">Scan Worker ID + Device</div>
+    </button>
+    <button class="mode-btn" id="btn-mode-return" type="button">
+      🔄 RETURN MODE (F4)
+      <div style="font-size: 0.8rem; font-weight: normal; margin-top: 0.2rem; opacity: 0.85;">Scan ONLY Device barcode</div>
+    </button>
+  </div>
+
+  <!-- Giant Scan Input Box -->
+  <div class="scan-box-wrap">
+    <input 
+      id="scan-input" 
+      class="scan-input" 
+      placeholder="Issue Mode: Scan Worker ID or Device barcode" 
+      autocomplete="off" 
+      autocorrect="off" 
+      autocapitalize="off" 
+      spellcheck="false" 
+      autofocus
+    >
+  </div>
+
+  <!-- Giant Status Banner -->
+  <div id="status-banner" class="status-banner idle">
+    <div id="status-headline" class="status-headline">Ready to Scan</div>
+    <div id="status-sub" class="status-sub">Scan Worker ID barcode or Device serial (links automatically)</div>
+    <div id="pending-badges" class="pending-badge-row" style="display: none;"></div>
+  </div>
+
+  <!-- Real-time Shift KPIs for this Operator -->
+  <div class="kpi-grid">
+    <div class="kpi-card">
+      <div class="kpi-label">My Issued This Shift</div>
+      <div class="kpi-value" id="stat-op-issued">0</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">My Returned This Shift</div>
+      <div class="kpi-value" id="stat-op-returned">0</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Fleet Available</div>
+      <div class="kpi-value" id="stat-fleet-avail">{{ board.counts.available }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Fleet Allotted</div>
+      <div class="kpi-value" id="stat-fleet-issued">{{ board.counts.allotted }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Damaged / Repair</div>
+      <div class="kpi-value {{ 'alert' if board.counts.unavailable > 0 else '' }}" id="stat-fleet-damaged">
+        {{ board.counts.unavailable }}
+      </div>
+    </div>
+  </div>
+
+  <!-- Recent Scans Stream -->
+  <div class="card">
+    <div class="card-title">
+      <span>⏱️ Recent Scan Activity (Live)</span>
+      <span class="text-muted" style="font-size: 0.85rem; font-weight: normal;">Updated automatically</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Time</th>
+            <th>Action</th>
+            <th>Device Serial</th>
+            <th>Worker (Department)</th>
+            <th>Operator</th>
+          </tr>
+        </thead>
+        <tbody id="recent-feed">
+          {% for t in board.recent %}
+          <tr>
+            <td class="mono">{{ t.time }}</td>
+            <td>
+              <span class="badge {{ 'badge-issued' if t.type == 'Issue' else 'badge-available' }}">{{ t.type }}</span>
+              {% if t.cond and t.cond != 'Working' %}
+              <span class="badge badge-damaged">{{ t.cond }}</span>
+              {% endif %}
+            </td>
+            <td class="mono"><b>{{ t.serial }}</b></td>
+            <td>{{ t.name }} <span class="text-muted">({{ t.dept }})</span></td>
+            <td>{{ t.by }}</td>
+          </tr>
+          {% else %}
+          <tr>
+            <td colspan="5" class="text-muted">No activity yet.</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Dialog for Damage Logging -->
+<dialog id="damage-dialog">
+  <div class="dialog-header">
+    ⚠️ Report Device Fault / Damage
+    <div class="text-muted mono" id="damage-serial" style="font-size: 1rem; margin-top: 0.25rem;"></div>
+  </div>
+
+  <div style="font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.5rem;">Select damage category:</div>
+  <div class="damage-cat-grid">
+    {% for cat in damage_categories %}
+    <button class="damage-cat-btn {{ 'selected' if loop.first else '' }}" data-cat="{{ cat }}" type="button">
+      {{ cat }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <div class="form-group" style="margin-top: 1rem;">
+    <label for="damage-notes">Fault Description / Remarks (Optional)</label>
+    <textarea id="damage-notes" rows="2" placeholder="e.g. dropped on floor, glass cracked..."></textarea>
+  </div>
+
+  <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 1.25rem;">
+    <button class="btn btn-secondary" id="damage-cancel-btn" type="button">Cancel</button>
+    <button class="btn btn-danger" id="damage-submit-btn" type="button">Save Damage & Quarantine Device</button>
+  </div>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/scanner.js"></script>
+<script src="/static/js/operator.js"></script>
+{% endblock %}
+
