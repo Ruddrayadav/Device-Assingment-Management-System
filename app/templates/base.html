@@ -18,7 +18,7 @@
     {% if user %}
     <nav class="nav-links">
       <a href="/" class="{{ 'active' if request.url.path == '/' }}">⚡ Scan Station</a>
-      <a href="/board" class="{{ 'active' if request.url.path == '/board' }}" target="_blank">📺 Live Board</a>
+      <a href="/board" class="{{ 'active' if request.url.path == '/board' }}">📺 Live Board</a>
       
       {% if user.role == 'admin' %}
       <a href="/admin" class="{{ 'active' if request.url.path == '/admin' }}">📊 Dashboard</a>

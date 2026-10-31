@@ -568,3 +568,4 @@ def commit_employee_import(db: Session, valid_rows: List[Dict[str, Any]], mode: 
             "inserted": inserted_count,
             "updated": updated_count
         }
+

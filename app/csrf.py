@@ -38,3 +38,4 @@ def get_csrf_token_for_request(request: Request) -> str:
     """Helper to generate a CSRF token for the current session in templates."""
     session_cookie = request.cookies.get("hhd_session", "anonymous")
     return generate_csrf_token(session_cookie)
+

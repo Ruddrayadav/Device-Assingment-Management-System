@@ -5,6 +5,7 @@ from fastapi.testclient import TestClient
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import tests.conftest
 
 from main import app, seed_initial_data_if_needed
 from app.database import engine, Base, SessionLocal
@@ -15,6 +16,8 @@ from app.migration import run_schema_migration
 class APIEndpointsTestSuite(unittest.TestCase):
 
     def setUp(self):
+        Base.metadata.create_all(bind=engine)
+        seed_initial_data_if_needed()
         self.client = TestClient(app)
 
     @classmethod
@@ -79,6 +82,48 @@ class APIEndpointsTestSuite(unittest.TestCase):
         resp_devs = self.client.get("/admin/devices")
         self.assertEqual(resp_devs.status_code, 200)
         self.assertIn("Device Inventory", resp_devs.text)
+
+    def test_all_navigation_routes_and_same_tab_behavior(self):
+        """
+        Verifies every application navigation link and ensures all internal
+        routes load successfully in the same tab without target='_blank' or window.open().
+        """
+        admin_token = sign_session({"username": "hhdadmin", "role": "admin"})
+        self.client.cookies.set("hhd_session", admin_token)
+
+        internal_pages = [
+            ("/", "Scan Station"),
+            ("/board", "Live Device Board"),
+            ("/admin", "Operations Center"),
+            ("/admin/devices", "Device Inventory"),
+            ("/admin/employees", "Employee Master"),
+            ("/admin/import", "Excel Master Import"),
+            ("/admin/transactions", "Transaction Audit"),
+            ("/admin/damage", "Damage & Repair"),
+            ("/admin/reports", "Reports"),
+            ("/admin/users", "User & Operator"),
+            ("/admin/backups", "Database Files"),
+            ("/admin/reset", "Controlled Initial Data Reset"),
+        ]
+
+        for path, expected_text in internal_pages:
+            resp = self.client.get(path)
+            self.assertEqual(resp.status_code, 200, f"Page {path} failed to load with 200")
+            self.assertIn(expected_text, resp.text, f"Page {path} missing expected content '{expected_text}'")
+            
+            # Assert no target="_blank" is used for any internal navigation link on any page
+            self.assertNotIn('href="/board" target="_blank"', resp.text)
+            self.assertNotIn('target="_blank"', resp.text)
+            self.assertNotIn('window.open(', resp.text)
+
+        # Test operator navigation links
+        op_token = sign_session({"username": "operator1", "role": "operator"})
+        self.client.cookies.set("hhd_session", op_token)
+        for path in ["/", "/board"]:
+            resp_op = self.client.get(path)
+            self.assertEqual(resp_op.status_code, 200)
+            self.assertNotIn('href="/board" target="_blank"', resp_op.text)
+            self.assertNotIn('target="_blank"', resp_op.text)
 
     def test_api_scan_over_http(self):
         db = SessionLocal()

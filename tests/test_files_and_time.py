@@ -42,6 +42,8 @@ class FilesAndTimeTestSuite(unittest.TestCase):
             db.close()
 
     def setUp(self):
+        Base.metadata.create_all(bind=engine)
+        seed_initial_data_if_needed()
         self.client = TestClient(app)
         self.admin_token = sign_session({"username": "hhdadmin", "role": "admin"})
         self.op_token = sign_session({"username": "operator1", "role": "operator"})

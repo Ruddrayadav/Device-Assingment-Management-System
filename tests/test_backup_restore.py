@@ -6,17 +6,25 @@ from pathlib import Path
 
 # Add project root to sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+import tests.conftest
 
 from app.config import DATA_DIR, BACKUP_DIR, DB_PATH
 from app.database import engine, Base, SessionLocal
 from app.models import User, Device, Employee
 from app.backup import create_safe_backup, list_backups, verify_backup_integrity, restore_backup
 from app.auth import hash_password
+from main import seed_initial_data_if_needed
 
 class BackupRestoreTestSuite(unittest.TestCase):
 
+    @classmethod
+    def setUpClass(cls):
+        Base.metadata.create_all(bind=engine)
+        seed_initial_data_if_needed()
+
     def setUp(self):
         Base.metadata.create_all(bind=engine)
+        seed_initial_data_if_needed()
         db = SessionLocal()
         # Seed test device
         dev = db.query(Device).filter(Device.serial == "BACKUP_TEST_001").first()

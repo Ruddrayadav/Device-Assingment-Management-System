@@ -254,3 +254,4 @@ def generate_employee_master_template() -> io.BytesIO:
     wb.save(output)
     output.seek(0)
     return output
+

@@ -56,8 +56,8 @@ async def trigger_backup(
 
 @router.post("/restore")
 async def trigger_restore(
-    filename: str = Form(...),
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_admin),
+    filename: str = Form(...)
 ):
     try:
         safe_backup_path(filename.strip())
@@ -70,8 +70,8 @@ async def trigger_restore(
 
 @router.post("/delete")
 async def trigger_delete(
-    filename: str = Form(...),
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_admin),
+    filename: str = Form(...)
 ):
     try:
         safe_backup_path(filename.strip())
@@ -84,8 +84,8 @@ async def trigger_delete(
 
 @router.post("/upload")
 async def upload_backup(
-    file: UploadFile = File(...),
-    admin: User = Depends(require_admin)
+    admin: User = Depends(require_admin),
+    file: UploadFile = File(...)
 ):
     original_name = file.filename or ""
     ext = Path(original_name).suffix.lower()
