@@ -81,6 +81,7 @@ def issue_device_atomic(
     Guarantees zero duplicate allocations. 24/7 continuous operation.
     """
     with SCAN_WRITE_LOCK:
+        db.expire_all()
         now = now_kolkata()
         date_str = today_kolkata_str()
 
@@ -107,14 +108,14 @@ def issue_device_atomic(
                 }
 
         # 1. Validate employee
-        emp = db.query(Employee).filter(Employee.employee_id == employee_id).first()
+        emp = db.query(Employee).filter(Employee.employee_id == employee_id).populate_existing().first()
         if not emp:
             raise ScanException("Employee ID not found in Master records.", "Employee Not Found")
         if not emp.active:
             raise ScanException(f"{emp.name} ({emp.employee_id}) is INACTIVE. Contact Administrator.", "Employee Inactive")
 
         # 2. Lock & Validate device
-        dev = db.query(Device).filter(Device.serial == device_serial).with_for_update().first()
+        dev = db.query(Device).filter(Device.serial == device_serial).populate_existing().with_for_update().first()
         if not dev:
             raise ScanException("Device serial not found in Inventory.", "Device Not Found")
 
@@ -235,6 +236,7 @@ def return_device_atomic(
     Zero need to scan employee ID again. 24/7 continuous operation.
     """
     with SCAN_WRITE_LOCK:
+        db.expire_all()
         now = now_kolkata()
         date_str = today_kolkata_str()
 
@@ -261,7 +263,7 @@ def return_device_atomic(
                     "message": f"Device {existing_tx.serial} was already returned (Idempotent retry)."
                 }
 
-        dev = db.query(Device).filter(Device.serial == device_serial).with_for_update().first()
+        dev = db.query(Device).filter(Device.serial == device_serial).populate_existing().with_for_update().first()
         if not dev:
             raise ScanException("Device serial not found in Inventory.", "Device Not Found")
 

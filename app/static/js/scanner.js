@@ -137,17 +137,20 @@ class BarcodeScannerEngine {
         return;
       }
 
-      // Check average interval of recent chars
+      // Check average interval of recent characters (USB HID scanners type with sub-45ms intervals)
       const recentIntervals = this.charIntervals.slice(-4);
       const avgInterval = recentIntervals.reduce((a, b) => a + b, 0) / recentIntervals.length;
-      
-      // USB scanners type with sub-35ms intervals
       const isScannerBurst = avgInterval < 45;
-      const timeoutToUse = isScannerBurst ? this.burstTimeoutMs : this.manualDebounceMs;
 
-      this.timer = setTimeout(() => {
-        this.triggerScanImmediate();
-      }, timeoutToUse);
+      if (isScannerBurst) {
+        // Automatic completion for hardware scanner bursts without requiring Enter/Tab suffix
+        this.timer = setTimeout(() => {
+          this.triggerScanImmediate();
+        }, this.burstTimeoutMs);
+      } else {
+        // Manual keyboard typing: do NOT prematurely auto-submit on a timer that splits long serials.
+        // Manual entry is submitted when the operator presses Enter or Tab.
+      }
     });
   }
 

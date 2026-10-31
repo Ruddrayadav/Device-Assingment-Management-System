@@ -50,22 +50,24 @@
       <div class="kpi-value" id="stat-fleet-avail">{{ board.counts.available }}</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Fleet Allotted</div>
-      <div class="kpi-value" id="stat-fleet-issued">{{ board.counts.allotted }}</div>
+      <div class="kpi-label">Currently Outstanding</div>
+      <div class="kpi-value" id="stat-fleet-issued">{{ outstanding_count if outstanding_count is defined else board.counts.allotted }}</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Damaged / Repair</div>
-      <div class="kpi-value {{ 'alert' if (board.counts.damaged_repair or board.counts.unavailable) > 0 else '' }}" id="stat-fleet-damaged">
-        {{ board.counts.damaged_repair if board.counts.damaged_repair is defined else board.counts.unavailable }}
-      </div>
+      <div class="kpi-label">My Damaged Received</div>
+      <div class="kpi-value {{ 'alert' if op_damaged and op_damaged > 0 else '' }}" id="stat-op-damaged">{{ op_damaged if op_damaged is defined else 0 }}</div>
+    </div>
+    <div class="kpi-card">
+      <div class="kpi-label">Rejected Scans Today</div>
+      <div class="kpi-value {{ 'alert' if op_rejected and op_rejected > 0 else '' }}" id="stat-op-rejected">{{ op_rejected if op_rejected is defined else 0 }}</div>
     </div>
   </div>
 
   <!-- Recent Scans Stream -->
   <div class="card">
-    <div class="card-title">
-      <span>⏱️ Recent Scan Activity (Live)</span>
-      <span class="text-muted" style="font-size: 0.85rem; font-weight: normal;">Updated automatically</span>
+    <div class="card-title flex-between">
+      <span>⏱️ Recent Scan Activity (Live Feed)</span>
+      <span class="text-muted" style="font-size: 0.85rem; font-weight: normal;">Updated automatically across workstations</span>
     </div>
     <div class="table-wrap">
       <table>
@@ -94,13 +96,63 @@
           </tr>
           {% else %}
           <tr>
-            <td colspan="5" class="text-muted">No activity yet.</td>
+            <td colspan="5" class="text-muted">No activity yet today.</td>
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
   </div>
+
+  <!-- Operator's Personal Daily History (Accountability) -->
+  {% if operator_history %}
+  <div class="card mt-3">
+    <div class="card-title flex-between">
+      <span>👤 My Completed Handover Records Today ({{ user.full_name or user.username }})</span>
+      <span class="badge badge-secondary">{{ operator_history|length }} entries recorded</span>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>Tx ID</th>
+            <th>Time</th>
+            <th>Type</th>
+            <th>Device Serial</th>
+            <th>Employee ID</th>
+            <th>Employee Name</th>
+            <th>Department</th>
+            <th>Condition</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for h in operator_history %}
+          <tr>
+            <td class="mono">{{ h.id }}</td>
+            <td class="mono" style="font-size: 0.825rem;">{{ h.transaction_time|time12 }}</td>
+            <td>
+              <span class="badge {{ 'badge-issued' if h.transaction_type == 'Issue' else 'badge-available' }}">
+                {{ h.transaction_type }}
+              </span>
+            </td>
+            <td class="mono"><b>{{ h.serial }}</b></td>
+            <td class="mono">{{ h.employee_id }}</td>
+            <td>{{ h.employee_name }}</td>
+            <td><span class="badge badge-secondary">{{ h.department }}</span></td>
+            <td>
+              {% if h.condition == 'Working' %}
+              <span class="text-muted">Working</span>
+              {% else %}
+              <span class="badge badge-damaged">{{ h.condition }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% endif %}
 </div>
 
 <!-- Modal Dialog for Damage Logging -->

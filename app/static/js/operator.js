@@ -19,6 +19,8 @@
   // Stats elements
   const statOpIssued = document.getElementById('stat-op-issued');
   const statOpReturned = document.getElementById('stat-op-returned');
+  const statOpDamaged = document.getElementById('stat-op-damaged');
+  const statOpRejected = document.getElementById('stat-op-rejected');
   const statFleetAvail = document.getElementById('stat-fleet-avail');
   const statFleetIssued = document.getElementById('stat-fleet-issued');
   const statFleetDamaged = document.getElementById('stat-fleet-damaged');
@@ -326,8 +328,13 @@
 
   // Live Stats & Feed Rendering
   function updateOperatorStats(stats) {
-    if (statOpIssued) statOpIssued.textContent = stats.issued_count;
-    if (statOpReturned) statOpReturned.textContent = stats.returned_count;
+    if (statOpIssued && stats.issued_count !== undefined) statOpIssued.textContent = stats.issued_count;
+    if (statOpReturned && stats.returned_count !== undefined) statOpReturned.textContent = stats.returned_count;
+    if (statOpDamaged && stats.damaged_count !== undefined) statOpDamaged.textContent = stats.damaged_count;
+    if (statOpRejected && stats.rejected_count !== undefined) {
+      statOpRejected.textContent = stats.rejected_count;
+      statOpRejected.classList.toggle('alert', stats.rejected_count > 0);
+    }
   }
 
   function updateBoard(board) {

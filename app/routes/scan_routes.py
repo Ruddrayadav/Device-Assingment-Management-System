@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, date
 from typing import Dict, Any, Optional
 from fastapi import APIRouter, Depends, Request, HTTPException, status
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.database import get_db
-from app.models import User, Device, Employee, Transaction, DamageReport, DeviceAssignment
+from app.models import User, Device, Employee, Transaction, DamageReport, DeviceAssignment, AuditLog
 from app.auth import require_user, require_admin, get_current_user_optional
 from app.scan_engine import (
     process_scan_pipeline, return_device_atomic, issue_device_atomic,
@@ -133,38 +134,6 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
         }
     }
 
-
-    out_today = db.query(func.count(Transaction.id)).filter(
-        Transaction.transaction_type == "Issue",
-        Transaction.transaction_time >= t0
-    ).scalar() or 0
-    back_today = db.query(func.count(Transaction.id)).filter(
-        Transaction.transaction_type == "Return",
-        Transaction.transaction_time >= t0
-    ).scalar() or 0
-
-    return {
-        "version": version,
-        "server_now": fmt_datetime(datetime.now()),
-        "today": today_str,
-        "available": avail,
-        "allotted": allot,
-        "unavailable": unavail,
-        "not_today": not_today,
-        "recent": recent,
-        "counts": {
-            "total": len(devices),
-            "available": len(avail),
-            "allotted": len(allot),
-            "unavailable": len(unavail),
-            "not_today": len(not_today),
-            "not_today_held": sum(1 for i in not_today if i["status"] == "Issued"),
-            "issues": open_issues,
-            "out_today": out_today,
-            "back_today": back_today
-        }
-    }
-
 class ScanPayload(BaseModel):
     code: str
     mode: str = "Issue"
@@ -177,6 +146,7 @@ async def handle_scan(
     user: User = Depends(require_user),
     db: Session = Depends(get_db)
 ):
+    t_start = time.perf_counter()
     result = process_scan_pipeline(
         db=db,
         code=payload.code,
@@ -185,12 +155,31 @@ async def handle_scan(
         operator=user,
         idempotency_key=payload.idempotency_key
     )
+    proc_time_ms = round((time.perf_counter() - t_start) * 1000, 2)
+    result["proc_time_ms"] = proc_time_ms
+
+    # Audit logging for rejected scans (operator accountability)
+    if not result.get("ok"):
+        try:
+            audit = AuditLog(
+                timestamp=now_kolkata(),
+                user_id=user.id,
+                username=user.full_name or user.username,
+                action="SCAN_REJECTED",
+                target_type="SCAN",
+                target_id=str(payload.code)[:64],
+                details=f"[{payload.mode}] {result.get('title')}: {result.get('message')}"
+            )
+            db.add(audit)
+            db.commit()
+        except Exception:
+            db.rollback()
 
     # Include live board data and operator stats
     board_data = get_live_board_data(db)
     result["board"] = board_data
 
-    # Current operator daily stats
+    # Current operator daily stats from permanent records
     today_str = today_kolkata_str()
     op_issued = db.query(Transaction).filter(
         Transaction.operator_id == user.id,
@@ -202,11 +191,26 @@ async def handle_scan(
         Transaction.transaction_date == today_str,
         Transaction.transaction_type == "Return"
     ).count()
+    op_damaged = db.query(DamageReport).filter(
+        DamageReport.reported_by_id == user.id,
+        DamageReport.report_date == today_str
+    ).count()
+    t0_today = now_kolkata().replace(hour=0, minute=0, second=0, microsecond=0)
+    op_rejected = db.query(AuditLog).filter(
+        AuditLog.user_id == user.id,
+        AuditLog.action == "SCAN_REJECTED",
+        AuditLog.timestamp >= t0_today
+    ).count()
+    outstanding_cnt = db.query(DeviceAssignment).filter(DeviceAssignment.status == "ACTIVE").count()
 
     result["operator_stats"] = {
         "operator_name": user.full_name or user.username,
         "issued_count": op_issued,
         "returned_count": op_returned,
+        "damaged_count": op_damaged,
+        "rejected_count": op_rejected,
+        "outstanding_count": outstanding_cnt,
+        "proc_time_ms": proc_time_ms,
         "total_transactions": op_issued + op_returned
     }
 
