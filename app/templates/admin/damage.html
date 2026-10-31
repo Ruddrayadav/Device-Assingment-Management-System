@@ -29,6 +29,65 @@
   </form>
 </div>
 
+<!-- Damage & Fleet Reconciliation Check -->
+<div class="card" style="padding: 1rem; border-left: 4px solid {{ '#ef4444' if reconciliation.has_issues else '#10b981' }};">
+  <div class="flex-between">
+    <div style="font-weight: 700; font-size: 1rem; color: {{ '#f87171' if reconciliation.has_issues else '#34d399' }};">
+      {{ '⚠️ Quarantine Discrepancies Detected' if reconciliation.has_issues else '✓ Fleet & Quarantine Fully Reconciled' }}
+    </div>
+    <span class="badge {{ 'badge-damaged' if reconciliation.has_issues else 'badge-available' }}">
+      {{ 'Action Required' if reconciliation.has_issues else 'Consistent' }}
+    </span>
+  </div>
+
+  {% if reconciliation.has_issues %}
+  <div style="margin-top: 0.75rem; font-size: 0.875rem; display: flex; flex-direction: column; gap: 0.5rem;">
+    {% if reconciliation.damaged_without_records %}
+    <div style="color: #fca5a5;">
+      • <b>Damaged status without open ticket:</b>
+      {% for d in reconciliation.damaged_without_records %}
+        <span class="mono">{{ d.serial }}</span>{{ ', ' if not loop.last else '' }}
+      {% endfor %}
+      <span class="text-muted">(Device status is 'Damaged' but no open damage report exists)</span>
+    </div>
+    {% endif %}
+
+    {% if reconciliation.repair_without_records %}
+    <div style="color: #fca5a5;">
+      • <b>Under Repair status without ticket:</b>
+      {% for d in reconciliation.repair_without_records %}
+        <span class="mono">{{ d.serial }}</span>{{ ', ' if not loop.last else '' }}
+      {% endfor %}
+      <span class="text-muted">(Device status is 'Under Repair' but no repair ticket exists)</span>
+    </div>
+    {% endif %}
+
+    {% if reconciliation.open_dmg_available %}
+    <div style="color: #fca5a5;">
+      • <b>Available devices with open damage report:</b>
+      {% for r in reconciliation.open_dmg_available %}
+        <span class="mono">{{ r.serial }}</span> (Report #{{ r.id }}){{ ', ' if not loop.last else '' }}
+      {% endfor %}
+      <span class="text-muted">(Device is marked Available but has an unresolved damage report)</span>
+    </div>
+    {% endif %}
+
+    {% if reconciliation.duplicate_open_serials %}
+    <div style="color: #fca5a5;">
+      • <b>Duplicate open damage tickets for single device:</b>
+      {% for s in reconciliation.duplicate_open_serials %}
+        <span class="mono">{{ s }}</span>{{ ', ' if not loop.last else '' }}
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+  {% else %}
+  <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.35rem;">
+    Every damaged and repair device has a verified tracking record. No available devices have pending damage quarantine flags.
+  </div>
+  {% endif %}
+</div>
+
 <!-- Damage Reports Table -->
 <div class="card">
   <div class="table-wrap">

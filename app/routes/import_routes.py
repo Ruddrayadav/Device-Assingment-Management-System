@@ -12,7 +12,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User
 from app.auth import require_admin
-from app.excel_templates import generate_device_inventory_template, generate_employee_master_template
+from app.excel_templates import (
+    generate_device_inventory_template, generate_employee_master_template,
+    generate_device_inventory_csv_template, generate_employee_master_csv_template
+)
 from app.excel_importer import (
     validate_device_import, commit_device_import,
     validate_employee_import, commit_employee_import
@@ -51,6 +54,17 @@ async def download_device_template(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+@router.get("/template/device.csv")
+async def download_device_csv_template(
+    admin: User = Depends(require_admin)
+):
+    csv_str = generate_device_inventory_csv_template()
+    return Response(
+        content=("\ufeff" + csv_str).encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="Device_Inventory_Template.csv"'}
+    )
+
 @router.get("/template/employee")
 async def download_employee_template(
     admin: User = Depends(require_admin)
@@ -61,6 +75,17 @@ async def download_employee_template(
         buf,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+    )
+
+@router.get("/template/employee.csv")
+async def download_employee_csv_template(
+    admin: User = Depends(require_admin)
+):
+    csv_str = generate_employee_master_csv_template()
+    return Response(
+        content=("\ufeff" + csv_str).encode("utf-8"),
+        media_type="text/csv; charset=utf-8",
+        headers={"Content-Disposition": 'attachment; filename="Employee_Master_Template.csv"'}
     )
 
 @router.post("/preview", response_class=HTMLResponse)

@@ -1,6 +1,14 @@
 import os
 import secrets
 from pathlib import Path
+from datetime import datetime, date
+
+try:
+    from zoneinfo import ZoneInfo
+    TIMEZONE_KOLKATA = ZoneInfo("Asia/Kolkata")
+except Exception:
+    from datetime import timezone, timedelta
+    TIMEZONE_KOLKATA = timezone(timedelta(hours=5, minutes=30))
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -16,10 +24,11 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 BACKUP_DIR.mkdir(parents=True, exist_ok=True)
 LOGS_DIR.mkdir(parents=True, exist_ok=True)
 
-DB_PATH = DATA_DIR / "hhd_system.db"
+DB_PATH = (DATA_DIR / "hhd_system.db").resolve()
 DATABASE_URL = f"sqlite:///{DB_PATH}"
 
 MAX_UPLOAD_MB = int(os.environ.get("HHD_MAX_UPLOAD_MB", "512"))
+DEFAULT_REPORT_DAYS = int(os.environ.get("HHD_DEFAULT_REPORT_DAYS", "30"))
 
 def get_secret_key() -> str:
     env_secret = os.environ.get("HHD_SECRET_KEY")
@@ -29,7 +38,7 @@ def get_secret_key() -> str:
     if key_file.exists():
         try:
             stored = key_file.read_text(encoding="utf-8").strip()
-            if stored:
+            if stored and len(stored) >= 32:
                 return stored
         except OSError:
             pass
@@ -40,7 +49,25 @@ def get_secret_key() -> str:
         pass
     return new_secret
 
+def rotate_secret_key() -> str:
+    """Rotates application secret key securely."""
+    new_secret = secrets.token_hex(32)
+    key_file = DATA_DIR / ".secret_key"
+    try:
+        key_file.write_text(new_secret, encoding="utf-8")
+    except OSError:
+        pass
+    return new_secret
+
 SECRET_KEY = get_secret_key()
+
+def now_kolkata() -> datetime:
+    """Returns current naive or localized datetime in Asia/Kolkata timezone."""
+    return datetime.now(TIMEZONE_KOLKATA).replace(tzinfo=None)
+
+def today_kolkata_str() -> str:
+    """Returns current calendar date string (YYYY-MM-DD) in Asia/Kolkata timezone."""
+    return datetime.now(TIMEZONE_KOLKATA).strftime("%Y-%m-%d")
 
 SERVER_HOST = os.environ.get("HHD_HOST", "0.0.0.0")
 SERVER_PORT = int(os.environ.get("HHD_PORT", "8000"))
@@ -62,4 +89,5 @@ DAMAGE_CATEGORIES = [
     "Physical damage",
     "Other"
 ]
+
 

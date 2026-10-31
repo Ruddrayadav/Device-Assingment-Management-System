@@ -12,6 +12,7 @@ from app.scan_engine import (
     process_scan_pipeline, return_device_atomic, issue_device_atomic,
     sanitize_code, ScanException
 )
+from app.config import DAMAGE_CATEGORIES, now_kolkata, today_kolkata_str
 from app.timefmt import fmt_time, fmt_datetime
 
 router = APIRouter(prefix="/api")
@@ -20,7 +21,7 @@ def get_board_version(db: Session) -> str:
     """
     Fast 4-query version string including max(Device.updated_at).
     """
-    today_str = date.today().isoformat()
+    today_str = today_kolkata_str()
     last_tx_id = db.query(func.coalesce(func.max(Transaction.id), 0)).scalar() or 0
     device_count = db.query(func.count(Device.serial)).scalar() or 0
     open_issues = db.query(func.count(DamageReport.id)).filter(DamageReport.review_status == "Open").scalar() or 0
@@ -29,8 +30,8 @@ def get_board_version(db: Session) -> str:
     return f"{last_tx_id}|{device_count}|{open_issues}|{max_updated_str}|{today_str}"
 
 def get_live_board_data(db: Session) -> Dict[str, Any]:
-    today_str = date.today().isoformat()
-    t0 = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+    today_str = today_kolkata_str()
+    t0 = now_kolkata().replace(hour=0, minute=0, second=0, microsecond=0)
 
     devices = db.query(Device).all()
     
@@ -100,6 +101,41 @@ def get_live_board_data(db: Session) -> Dict[str, Any]:
 
     out_today = db.query(func.count(Transaction.id)).filter(
         Transaction.transaction_type == "Issue",
+        Transaction.transaction_date == today_str
+    ).scalar() or 0
+    back_today = db.query(func.count(Transaction.id)).filter(
+        Transaction.transaction_type == "Return",
+        Transaction.transaction_date == today_str
+    ).scalar() or 0
+
+    damaged_repair_cnt = sum(1 for d in devices if d.status in ("Damaged", "Under Repair"))
+
+    return {
+        "version": version,
+        "server_now": fmt_datetime(now_kolkata()),
+        "today": today_str,
+        "available": avail,
+        "allotted": allot,
+        "unavailable": unavail,
+        "not_today": not_today,
+        "recent": recent,
+        "counts": {
+            "total": len(devices),
+            "available": len(avail),
+            "allotted": len(allot),
+            "unavailable": len(unavail),
+            "damaged_repair": damaged_repair_cnt,
+            "not_today": len(not_today),
+            "not_today_held": sum(1 for i in not_today if i["status"] == "Issued"),
+            "issues": open_issues,
+            "out_today": out_today,
+            "back_today": back_today
+        }
+    }
+
+
+    out_today = db.query(func.count(Transaction.id)).filter(
+        Transaction.transaction_type == "Issue",
         Transaction.transaction_time >= t0
     ).scalar() or 0
     back_today = db.query(func.count(Transaction.id)).filter(
@@ -155,7 +191,7 @@ async def handle_scan(
     result["board"] = board_data
 
     # Current operator daily stats
-    today_str = date.today().isoformat()
+    today_str = today_kolkata_str()
     op_issued = db.query(Transaction).filter(
         Transaction.operator_id == user.id,
         Transaction.transaction_date == today_str,
@@ -277,6 +313,7 @@ async def handle_damage_report(
 @router.get("/board/live")
 async def get_live_board(
     v: Optional[str] = None,
+    user: User = Depends(require_user),
     db: Session = Depends(get_db)
 ):
     current_ver = get_board_version(db)

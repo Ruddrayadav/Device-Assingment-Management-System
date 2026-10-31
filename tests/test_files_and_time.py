@@ -310,6 +310,7 @@ class FilesAndTimeTestSuite(unittest.TestCase):
     # 5. Live Board Versioning & Conditional Polling
     # -------------------------------------------------------------
     def test_board_versioning_and_conditional_return(self):
+        self.client.cookies.set("hhd_session", self.op_token)
         # 1. Fetch initial live board data
         resp1 = self.client.get("/api/board/live")
         self.assertEqual(resp1.status_code, 200)

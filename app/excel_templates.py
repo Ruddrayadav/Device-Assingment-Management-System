@@ -255,3 +255,20 @@ def generate_employee_master_template() -> io.BytesIO:
     output.seek(0)
     return output
 
+def generate_device_inventory_csv_template() -> str:
+    return (
+        "Sr.No.,Make,Model No,Serial Number,Department,Remarks,Date\r\n"
+        "1,CHAINWAY,MC95,2288,INV MTS,Working,28-Oct-26\r\n"
+        "2,CHAINWAY,MC95,2472,INV MTS,Working,28-Oct-26\r\n"
+        "3,ZEBRA,TC22,s25119524701038,INV MTS,Working,28-Oct-26\r\n"
+    )
+
+def generate_employee_master_csv_template() -> str:
+    return (
+        "Sr.No.,Employee ID,Employee Name,Department,Status\r\n"
+        "1,EMP1001,Rajesh Kumar,Operations,Active\r\n"
+        "2,EMP1002,Pooja Sharma,Inventory,Active\r\n"
+        "3,EMP1003,Sunil Verma,Dispatch,Inactive\r\n"
+    )
+
+

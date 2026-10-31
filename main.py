@@ -8,7 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
-from app.config import SERVER_HOST, SERVER_PORT, BASE_DIR, DATA_DIR, LOGS_DIR, BACKUP_DIR
+from app.config import SERVER_HOST, SERVER_PORT, BASE_DIR, DATA_DIR, LOGS_DIR, BACKUP_DIR, DB_PATH
 from app.database import engine, Base, SessionLocal
 from app.models import User, Employee, Device
 from app.auth import hash_password
@@ -109,13 +109,12 @@ async def lifespan(app: FastAPI):
     print("\n" + "=" * 68)
     print(" HHD DEVICE MANAGEMENT SYSTEM — VERSION 3.0 (24/7 CONTINUOUS)")
     print("=" * 68)
+    print(f" Database Location:   {DB_PATH}")
     print(f" Local Access:        http://127.0.0.1:{SERVER_PORT}")
     print(f" LAN Access (PCs):    http://{primary_ip}:{SERVER_PORT}")
     print(f" Wall Display Board:  http://{primary_ip}:{SERVER_PORT}/board")
     print(f" Excel Master Import: http://{primary_ip}:{SERVER_PORT}/admin/import")
-    print(f" Admin Credentials:   Username: hhdadmin / Password: admin12345")
-    print(f" Operator 1 Login:    Username: operator1 / Password: operator123")
-    print(f" Operator 2 Login:    Username: operator2 / Password: operator123")
+    print(" Administrator Setup: Run setup_admin.py to create/manage admin credentials")
     print("=" * 68 + "\n")
     yield
 
@@ -125,6 +124,24 @@ app = FastAPI(
     version="3.0.0",
     lifespan=lifespan
 )
+
+# Security Headers & CSP Middleware
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "font-src 'self'; "
+        "frame-ancestors 'none';"
+    )
+    return response
 
 # Mount Static Files
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "app" / "static")), name="static")

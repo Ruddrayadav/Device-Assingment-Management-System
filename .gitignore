@@ -1,12 +1,43 @@
+# Local SQLite databases & backups (NEVER commit production or test data)
 data/
+data/*
 backups/
+backups/*
 logs/
-.venv/
-__pycache__/
-**/__pycache__/
-*.py[cod]
-*$py.class
+logs/*
 *.db
 *.db-wal
 *.db-shm
 .upload_*.part
+*.part
+*.log
+
+# Sensitive environment and credentials
+.env
+.env.*
+.secret_key
+*/.secret_key
+
+# Python artifacts
+__pycache__/
+**/__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+ENV/
+
+# OS artifacts
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Packaging & Build
+build/
+dist/
+*.spec

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Continuous Outstanding Devices</h1>
+    <div class="text-muted">Real-time 24/7 tracking of all currently handed out devices, custody duration, and missing device reporting</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem; align-items: center;">
+    <span class="badge badge-issued" style="font-size: 0.95rem; padding: 0.4rem 0.8rem;">
+      Active Custody: <b>{{ total_count }}</b>
+    </span>
+    <a href="/reports/excel" class="btn btn-secondary">📥 Full Excel Report</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device Serial</th>
+          <th>Make / Model</th>
+          <th>Device Dept</th>
+          <th>Worker ID</th>
+          <th>Worker Name</th>
+          <th>Worker Dept</th>
+          <th>Issued Date & Time</th>
+          <th>Issued By</th>
+          <th>Duration (Hrs)</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for o in outstanding %}
+        <tr>
+          <td class="mono"><b>{{ o.serial }}</b></td>
+          <td>{{ o.make }} {{ o.model }}</td>
+          <td><span class="badge badge-secondary">{{ o.device_department }}</span></td>
+          <td class="mono">{{ o.employee_id }}</td>
+          <td><b>{{ o.employee_name }}</b></td>
+          <td>{{ o.department }}</td>
+          <td class="mono" style="font-size: 0.825rem; white-space: nowrap;">
+            {{ o.issued_at|datetime12 }}
+          </td>
+          <td>{{ o.operator_name }}</td>
+          <td>
+            {% if o.duration_hours > 24 %}
+            <span class="badge badge-damaged" title="Over 24 hours in custody">{{ o.duration_hours }}h (Overdue)</span>
+            {% elif o.duration_hours > 12 %}
+            <span class="badge badge-repair" title="Over 12 hours in custody">{{ o.duration_hours }}h</span>
+            {% else %}
+            <span class="badge badge-available">{{ o.duration_hours }}h</span>
+            {% endif %}
+          </td>
+          <td>
+            <form method="post" action="/admin/devices/{{ o.serial }}/mark-missing" onsubmit="return confirm('Are you sure you want to mark device {{ o.serial }} as MISSING? This will record the loss and close active custody.');" style="display: flex; gap: 0.35rem; align-items: center;">
+              <input name="notes" placeholder="Reason/Notes..." style="font-size: 0.75rem; padding: 0.2rem 0.4rem; width: 110px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
+              <button class="btn btn-sm btn-danger" type="submit">Mark Missing</button>
+            </form>
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="10" class="text-muted" style="text-align: center; padding: 2.5rem;">
+            ✓ All devices are currently safely returned in warehouse stock. Zero outstanding handovers.
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

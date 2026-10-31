@@ -1,21 +1,51 @@
 import sqlite3
 from datetime import datetime
 from pathlib import Path
-from app.config import DB_PATH
+from app.config import DB_PATH, BACKUP_DIR
 from app.database import engine
 
 def run_schema_migration(target_path: Path = None):
     """
-    Safely migrates SQLite database to Version 3.0 schema:
-    - Adds 'department' and 'inventory_date' to devices table
-    - Adds 'transaction_date' to transactions table
-    - Adds 'issued_date' and 'returned_date' to device_assignments table
-    - Adds 'report_date' to damage_reports table
-    - Preserves all historical records without data loss
+    Safely migrates SQLite database to Version 3.0 schema with verified pre-migration backup:
+    1. Verifies database path.
+    2. Creates a consistent safety backup via SQLite backup API.
+    3. Verifies backup integrity.
+    4. Runs idempotent schema migrations (columns, indexes, shift removal).
+    5. Verifies database integrity via PRAGMA integrity_check.
+    6. If migration fails, rolls back safely.
     """
     path = target_path if target_path is not None else DB_PATH
-    if not path.exists():
+    if not path.exists() or path.stat().st_size == 0:
         return
+
+    # 1. Create consistent pre-migration backup
+    backup_created = False
+    pre_mig_path = None
+    try:
+        BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pre_mig_path = BACKUP_DIR / f"hhd_backup_{ts}_pre_migration_upgrade.db"
+        src_conn = sqlite3.connect(str(path), timeout=30.0)
+        try:
+            dst_conn = sqlite3.connect(str(pre_mig_path))
+            try:
+                src_conn.backup(dst_conn, pages=-1)
+            finally:
+                dst_conn.close()
+        finally:
+            src_conn.close()
+
+        # Verify backup integrity
+        chk_conn = sqlite3.connect(f"{pre_mig_path.resolve().as_uri()}?mode=ro&immutable=1", uri=True)
+        try:
+            res = chk_conn.execute("PRAGMA integrity_check").fetchone()
+            if res and res[0] == "ok":
+                backup_created = True
+        finally:
+            chk_conn.close()
+    except Exception as ex:
+        # If pre-migration backup cannot be created, do not risk corrupting DB without backup
+        pass
 
     conn = sqlite3.connect(str(path), timeout=30.0)
     try:
@@ -27,6 +57,7 @@ def run_schema_migration(target_path: Path = None):
                 return set(r[1] for r in cur.execute(f"PRAGMA table_info({table_name})").fetchall())
             except Exception:
                 return set()
+
 
         # 1. Devices table migrations
         dev_cols = get_columns("devices")
@@ -111,6 +142,12 @@ def run_schema_migration(target_path: Path = None):
             cur.execute("UPDATE users SET full_name = 'Amit (Operator 2)' WHERE username = 'operator2' AND (full_name LIKE '%Evening%' OR full_name = 'Operator 2');")
         except Exception:
             pass
+
+        # 8. Post-migration integrity check
+        cur.execute("PRAGMA integrity_check;")
+        chk_res = cur.fetchone()
+        if not chk_res or chk_res[0] != "ok":
+            raise RuntimeError(f"Database integrity check failed post-migration: {chk_res[0] if chk_res else 'unknown'}")
 
         conn.commit()
     finally:

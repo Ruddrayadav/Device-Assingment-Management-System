@@ -39,11 +39,11 @@
   <div class="kpi-grid">
     <div class="kpi-card">
       <div class="kpi-label">My Issued Today</div>
-      <div class="kpi-value" id="stat-op-issued">0</div>
+      <div class="kpi-value" id="stat-op-issued">{{ op_issued if op_issued is defined else 0 }}</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">My Returned Today</div>
-      <div class="kpi-value" id="stat-op-returned">0</div>
+      <div class="kpi-value" id="stat-op-returned">{{ op_returned if op_returned is defined else 0 }}</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Fleet Available</div>
@@ -55,8 +55,8 @@
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Damaged / Repair</div>
-      <div class="kpi-value {{ 'alert' if board.counts.unavailable > 0 else '' }}" id="stat-fleet-damaged">
-        {{ board.counts.unavailable }}
+      <div class="kpi-value {{ 'alert' if (board.counts.damaged_repair or board.counts.unavailable) > 0 else '' }}" id="stat-fleet-damaged">
+        {{ board.counts.damaged_repair if board.counts.damaged_repair is defined else board.counts.unavailable }}
       </div>
     </div>
   </div>

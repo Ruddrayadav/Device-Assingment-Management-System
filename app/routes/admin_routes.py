@@ -3,7 +3,7 @@ import io
 from datetime import datetime, date
 from pathlib import Path
 from typing import Optional
-from fastapi import APIRouter, Request, Depends, Form, UploadFile, File, HTTPException, status
+from fastapi import APIRouter, Request, Depends, Form, UploadFile, File, HTTPException, status, Query
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -15,10 +15,11 @@ from app.models import (
     User, Device, Employee, Transaction, DamageReport,
     DeviceAssignment, AuditLog
 )
-from app.auth import require_admin, hash_password, verify_password
+from app.auth import require_admin, hash_password, verify_password, login_limiter
 from app.backup import create_safe_backup
-from app.config import DAMAGE_CATEGORIES, DEVICE_STATUSES
+from app.config import DAMAGE_CATEGORIES, DEVICE_STATUSES, now_kolkata, today_kolkata_str
 from app.timefmt import fmt_datetime
+
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
@@ -331,11 +332,13 @@ async def save_employee(
     return RedirectResponse(f"/admin/employees?msg=Employee+{eid}+saved+successfully", status_code=302)
 
 # -------------------------------------------------------------
-# 4. TRANSACTION AUDIT LOG - CONTINUOUS 24/7
+# 4. TRANSACTION AUDIT LOG - CONTINUOUS 24/7 (REAL PAGINATION)
 # -------------------------------------------------------------
 @router.get("/transactions", response_class=HTMLResponse)
 async def admin_transactions(
     request: Request,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(50, ge=10, le=500),
     q: Optional[str] = "",
     type_filter: Optional[str] = "",
     operator_filter: Optional[str] = "",
@@ -369,7 +372,12 @@ async def admin_transactions(
     if date_end:
         query = query.filter(Transaction.transaction_date <= date_end)
 
-    txs = query.order_by(Transaction.id.desc()).limit(2500).all()
+    total_records = query.count()
+    total_pages = max(1, (total_records + page_size - 1) // page_size)
+    current_page = min(page, total_pages)
+    offset = (current_page - 1) * page_size
+
+    txs = query.order_by(Transaction.id.desc()).offset(offset).limit(page_size).all()
 
     all_operators = [u[0] for u in db.query(Transaction.operator_name).distinct().all() if u[0]]
     all_depts = [d[0] for d in db.query(Transaction.department).distinct().all() if d[0]]
@@ -378,6 +386,14 @@ async def admin_transactions(
         "title": "Transaction Audit - Admin",
         "user": admin,
         "transactions": txs,
+        "page": current_page,
+        "page_size": page_size,
+        "total_records": total_records,
+        "total_pages": total_pages,
+        "has_prev": current_page > 1,
+        "has_next": current_page < total_pages,
+        "prev_page": current_page - 1,
+        "next_page": current_page + 1,
         "q": q,
         "type_filter": type_filter,
         "operator_filter": operator_filter,
@@ -389,7 +405,7 @@ async def admin_transactions(
     })
 
 # -------------------------------------------------------------
-# 5. DAMAGE & REPAIR MANAGEMENT
+# 5. DAMAGE & REPAIR MANAGEMENT & RECONCILIATION
 # -------------------------------------------------------------
 @router.get("/damage", response_class=HTMLResponse)
 async def admin_damage(
@@ -403,15 +419,57 @@ async def admin_damage(
         query = query.filter(DamageReport.review_status == status_filter)
 
     reports = query.order_by(
-        case((DamageReport.review_status == "Open", 1), (DamageReport.review_status == "Under Repair", 2), else_=3),
+        case((DamageReport.review_status == "Open", 1), (DamageReport.review_status == "Pending Inspection", 2), (DamageReport.review_status == "Under Repair", 3), else_=4),
         DamageReport.id.desc()
     ).limit(1000).all()
+
+    # Damage Reconciliation Checks (Part 5 Requirements)
+    open_dmg_serials = set(
+        r[0] for r in db.query(DamageReport.serial)
+        .filter(DamageReport.review_status.in_(["Open", "Pending Inspection"]))
+        .all()
+    )
+    open_rep_serials = set(
+        r[0] for r in db.query(DamageReport.serial)
+        .filter(DamageReport.review_status.in_(["Open", "Pending Inspection", "Under Repair"]))
+        .all()
+    )
+
+    damaged_without_records = db.query(Device).filter(
+        Device.status == "Damaged",
+        Device.serial.notin_(open_dmg_serials) if open_dmg_serials else True
+    ).all()
+
+    repair_without_records = db.query(Device).filter(
+        Device.status == "Under Repair",
+        Device.serial.notin_(open_rep_serials) if open_rep_serials else True
+    ).all()
+
+    avail_serials = set(r[0] for r in db.query(Device.serial).filter(Device.status == "Available").all())
+    open_dmg_available = db.query(DamageReport).filter(
+        DamageReport.review_status.in_(["Open", "Pending Inspection"]),
+        DamageReport.serial.in_(avail_serials) if avail_serials else False
+    ).all()
+
+    dup_rows = db.query(DamageReport.serial, func.count(DamageReport.id)).filter(
+        DamageReport.review_status.in_(["Open", "Pending Inspection"])
+    ).group_by(DamageReport.serial).having(func.count(DamageReport.id) > 1).all()
+    duplicate_open_serials = [r[0] for r in dup_rows]
+
+    reconciliation = {
+        "damaged_without_records": damaged_without_records,
+        "repair_without_records": repair_without_records,
+        "open_dmg_available": open_dmg_available,
+        "duplicate_open_serials": duplicate_open_serials,
+        "has_issues": bool(damaged_without_records or repair_without_records or open_dmg_available or duplicate_open_serials)
+    }
 
     return templates.TemplateResponse(request=request, name="admin/damage.html", context={
         "title": "Damage & Repair Management - Admin",
         "user": admin,
         "reports": reports,
         "status_filter": status_filter,
+        "reconciliation": reconciliation,
         "damage_categories": DAMAGE_CATEGORIES
     })
 
@@ -427,7 +485,7 @@ async def update_damage_status(
     if not report:
         return RedirectResponse("/admin/damage?error=Report+not+found", status_code=302)
 
-    now = datetime.now()
+    now = now_kolkata()
     report.review_status = review_status
     report.resolution_notes = resolution_notes.strip()
     if review_status in ("Repaired/Available", "Closed"):
@@ -437,7 +495,7 @@ async def update_damage_status(
         other_open = db.query(DamageReport).filter(
             DamageReport.serial == report.serial,
             DamageReport.id != report.id,
-            DamageReport.review_status.in_(["Open", "Under Repair"])
+            DamageReport.review_status.in_(["Open", "Pending Inspection", "Under Repair"])
         ).first()
 
         if not other_open:
@@ -456,6 +514,94 @@ async def update_damage_status(
     return RedirectResponse("/admin/damage?msg=Damage+report+updated+successfully", status_code=302)
 
 # -------------------------------------------------------------
+# 5b. CONTINUOUS OUTSTANDING DEVICES REPORT & MISSING WORKFLOW
+# -------------------------------------------------------------
+@router.get("/outstanding", response_class=HTMLResponse)
+async def admin_outstanding_devices(
+    request: Request,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    active_rows = db.query(
+        DeviceAssignment, Device, Employee
+    ).outerjoin(Device, Device.serial == DeviceAssignment.device_serial
+    ).outerjoin(Employee, Employee.employee_id == DeviceAssignment.employee_id
+    ).filter(DeviceAssignment.status == "ACTIVE"
+    ).order_by(DeviceAssignment.issued_at.desc()).all()
+
+    now_dt = now_kolkata()
+    outstanding = []
+    for asgn, dev, emp in active_rows:
+        duration_hrs = round((now_dt - asgn.issued_at).total_seconds() / 3600, 1) if asgn.issued_at else 0
+        outstanding.append({
+            "serial": asgn.device_serial,
+            "make": dev.make if dev else "",
+            "model": dev.model if dev else "",
+            "device_department": getattr(dev, "department", "GENERAL") if dev else "",
+            "employee_id": asgn.employee_id,
+            "employee_name": emp.name if emp else asgn.employee_id,
+            "department": emp.department if emp else "",
+            "issued_at": asgn.issued_at,
+            "issued_at_fmt": fmt_datetime(asgn.issued_at),
+            "issued_date": asgn.issued_date,
+            "operator_name": asgn.issued_by_operator_name,
+            "duration_hours": duration_hrs
+        })
+
+    return templates.TemplateResponse(request=request, name="admin/outstanding.html", context={
+        "title": "Outstanding Issued Devices - Continuous 24/7",
+        "user": admin,
+        "outstanding": outstanding,
+        "total_count": len(outstanding)
+    })
+
+@router.post("/devices/{serial}/mark-missing")
+async def mark_device_missing(
+    serial: str,
+    notes: str = Form(""),
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    dev = db.query(Device).filter(Device.serial == serial).first()
+    if not dev:
+        raise HTTPException(status_code=404, detail="Device not found.")
+
+    now = now_kolkata()
+    dev.status = "Missing"
+    dev.condition = "Missing"
+    dev.notes = (dev.notes + f" | Marked Missing by {admin.full_name or admin.username}: {notes}").strip(" |")
+    dev.updated_at = now
+
+    # Close active assignment
+    asgn = db.query(DeviceAssignment).filter(
+        DeviceAssignment.device_serial == serial,
+        DeviceAssignment.status == "ACTIVE"
+    ).first()
+    if asgn:
+        asgn.status = "RETURNED"
+        asgn.returned_at = now
+        asgn.returned_date = today_kolkata_str()
+        asgn.returned_by_operator_id = admin.id
+        asgn.returned_by_operator_name = admin.full_name or admin.username
+        asgn.condition_on_return = "Missing"
+        asgn.remarks = f"Marked missing by admin: {notes}"
+
+    audit = AuditLog(
+        timestamp=now,
+        user_id=admin.id,
+        username=admin.username,
+        action="MARK_DEVICE_MISSING",
+        target_type="DEVICE",
+        target_id=serial,
+        details=f"Device marked missing by admin {admin.full_name or admin.username}. Notes: {notes}"
+    )
+    db.add(audit)
+    db.commit()
+
+    return RedirectResponse("/admin/outstanding?msg=Device+marked+as+Missing+successfully", status_code=302)
+
+
+# -------------------------------------------------------------
 # 6. USER MANAGEMENT (OPERATORS & ADMINS)
 # -------------------------------------------------------------
 @router.get("/users", response_class=HTMLResponse)
@@ -464,11 +610,24 @@ async def admin_users(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
-    users = db.query(User).order_by(User.role.asc(), User.username.asc()).all()
+    raw_users = db.query(User).order_by(User.role.asc(), User.username.asc()).all()
+    user_rows = []
+    for u in raw_users:
+        is_locked, rem_time = login_limiter.is_locked_out(u.username.lower())
+        user_rows.append({
+            "id": u.id,
+            "username": u.username,
+            "full_name": u.full_name,
+            "role": u.role,
+            "active": u.active,
+            "is_locked": is_locked,
+            "lockout_remaining": rem_time,
+            "created_at": u.created_at
+        })
     return templates.TemplateResponse(request=request, name="admin/users.html", context={
         "title": "User Accounts & Operators - Admin",
         "user": admin,
-        "users": users
+        "users": user_rows
     })
 
 @router.post("/users")
@@ -520,6 +679,20 @@ async def toggle_user_active(
         db.commit()
 
     return RedirectResponse("/admin/users?msg=User+status+updated", status_code=302)
+
+@router.post("/users/{user_id}/unlock")
+async def unlock_user_account(
+    user_id: int,
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    u = db.query(User).filter(User.id == user_id).first()
+    if u:
+        login_limiter.unlock_user(u.username)
+        u.active = True
+        u.updated_at = datetime.now()
+        db.commit()
+    return RedirectResponse("/admin/users?msg=User+account+unlocked+successfully", status_code=302)
 
 # -------------------------------------------------------------
 # 7. CONTROLLED INITIAL DATA RESET (DEMO DATA CLEANUP)

@@ -42,7 +42,6 @@ def main():
             password_hash=hash_password(pwd),
             full_name=full_name,
             role="admin",
-            default_shift="Morning",
             active=True,
             created_at=now,
             updated_at=now

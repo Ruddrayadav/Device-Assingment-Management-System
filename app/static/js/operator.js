@@ -109,6 +109,16 @@
     });
   }
 
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   // Visual Status Rendering
   function setStatus(type, title, message, pending = null) {
     clearTimeout(bannerTimer);
@@ -121,7 +131,7 @@
       pendingState = pending;
       pendingContainer.style.display = 'flex';
       pendingContainer.innerHTML = `
-        <span class="pending-badge">⏳ Pending ${pending.type.toUpperCase()}: ${pending.label || pending.code}</span>
+        <span class="pending-badge">⏳ Pending ${escapeHtml(pending.type ? pending.type.toUpperCase() : '')}: ${escapeHtml(pending.label || pending.code)}</span>
         <button class="btn btn-sm btn-secondary" id="btn-cancel-pending" type="button">Cancel (Esc)</button>
       `;
       document.getElementById('btn-cancel-pending')?.addEventListener('click', () => resetPending());
@@ -187,11 +197,10 @@
         if (data.state === 'done') {
           // Success!
           scanner.playSuccess();
-          const extraBtn = data.can_flag ? ` <button class="btn btn-sm btn-danger" data-report-damage="${data.device?.serial}">Report Damage</button>` : '';
           setStatus('success', `✓ ${data.title}`, data.message);
           
           if (data.can_flag && data.device?.serial) {
-            subline.innerHTML = `${data.message} &nbsp; <button class="btn btn-sm btn-danger" id="quick-damage-btn" type="button">Report Damage</button>`;
+            subline.innerHTML = `${escapeHtml(data.message)} &nbsp; <button class="btn btn-sm btn-danger" id="quick-damage-btn" type="button">Report Damage</button>`;
             document.getElementById('quick-damage-btn')?.addEventListener('click', () => openDamageModal(data.device.serial));
           }
 
@@ -209,7 +218,7 @@
         }
         setStatus('error', `✗ ${data.title}`, data.message, pendingState);
         if (unknownAction) {
-          subline.innerHTML = `${data.message} ${unknownAction}`;
+          subline.innerHTML = `${escapeHtml(data.message)} ${unknownAction}`;
           document.getElementById('btn-quick-add-dev')?.addEventListener('click', () => quickAddDevice(data.code));
         }
       }
@@ -335,14 +344,14 @@
         recentFeed.innerHTML = board.recent.map(t => {
           const isIssue = t.type === 'Issue';
           const badgeClass = isIssue ? 'badge-issued' : 'badge-available';
-          const condAlert = (t.cond && t.cond !== 'Working') ? ` <span class="badge badge-damaged">${t.cond}</span>` : '';
+          const condAlert = (t.cond && t.cond !== 'Working') ? ` <span class="badge badge-damaged">${escapeHtml(t.cond)}</span>` : '';
           return `
             <tr>
-              <td class="mono">${t.time}</td>
-              <td><span class="badge ${badgeClass}">${t.type}</span>${condAlert}</td>
-              <td class="mono"><b>${t.serial}</b></td>
-              <td>${t.name} <span class="text-muted">(${t.dept})</span></td>
-              <td>${t.by}</td>
+              <td class="mono">${escapeHtml(t.time)}</td>
+              <td><span class="badge ${badgeClass}">${escapeHtml(t.type)}</span>${condAlert}</td>
+              <td class="mono"><b>${escapeHtml(t.serial)}</b></td>
+              <td>${escapeHtml(t.name)} <span class="text-muted">(${escapeHtml(t.dept)})</span></td>
+              <td>${escapeHtml(t.by)}</td>
             </tr>
           `;
         }).join('');

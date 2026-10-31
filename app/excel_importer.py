@@ -6,9 +6,10 @@ from typing import List, Dict, Any, Tuple, Optional
 from openpyxl import load_workbook
 from sqlalchemy.orm import Session
 
-from app.models import Device, Employee, DeviceAssignment, Transaction
+from app.models import Device, Employee, DeviceAssignment, Transaction, DamageReport
 from app.database import SCAN_WRITE_LOCK
 from app.backup import create_safe_backup
+from app.config import now_kolkata, today_kolkata_str
 
 def normalize_header(header: str) -> str:
     """Normalizes header string: removes spaces, punctuation, lowercase."""
@@ -23,6 +24,55 @@ def cell_to_str(val: Any) -> str:
     if isinstance(val, float) and val.is_integer():
         return str(int(val)).strip()
     return str(val).strip()
+
+def map_device_condition_and_status(remarks: str) -> Tuple[str, str, Optional[str]]:
+    """
+    Maps inventory remarks to device fleet status and condition:
+    Working -> (Available, Working, None)
+    Available -> (Available, Working, None)
+    Not Working -> (Damaged, Damaged, None)
+    Under Repair -> (Under Repair, Under Repair, None)
+    Damaged -> (Damaged, Damaged, None)
+    Unknown remarks -> ("", "", error_explanation)
+    """
+    if not remarks:
+        # Default to Working if empty
+        return "Available", "Working", None
+
+    norm = remarks.strip().lower()
+    if norm in ("working", "available", "ok", "good"):
+        return "Available", "Working", None
+    elif norm in ("not working", "damaged", "broken", "faulty", "fault"):
+        return "Damaged", "Damaged", None
+    elif norm in ("under repair", "in repair", "repairing", "repair"):
+        return "Under Repair", "Under Repair", None
+    else:
+        return "", "", f"Unknown or ambiguous status/remarks: '{remarks}'. Must be Working, Available, Not Working, or Under Repair."
+
+def map_employee_status(status_raw: str) -> Tuple[bool, str, Optional[str]]:
+    """
+    Maps employee status string strictly.
+    Active -> (True, 'Active', None)
+    Inactive, Resigned, Left, Terminated -> (False, Display, None)
+    Unknown / Blank -> (False, '', error_reason)
+    """
+    if not status_raw:
+        return False, "", "Employee Status cannot be blank. Must be Active, Inactive, Resigned, Left, or Terminated."
+
+    norm = status_raw.strip().lower()
+    if norm in ("active", "current", "working", "enabled", "1", "true", "yes"):
+        return True, "Active", None
+    elif norm in ("inactive", "0", "false", "disabled", "no"):
+        return False, "Inactive", None
+    elif norm in ("resigned", "resignation"):
+        return False, "Resigned", None
+    elif norm in ("left", "absconded", "relieved"):
+        return False, "Left", None
+    elif norm in ("terminated", "dismissed", "fired"):
+        return False, "Terminated", None
+    else:
+        return False, "", f"Unknown employee status: '{status_raw}'. Must be Active, Inactive, Resigned, Left, or Terminated."
+
 
 # ---------------------------------------------------------------------------
 # Device Inventory Parsing & Validation
@@ -111,7 +161,16 @@ def validate_device_import(db: Session, file_bytes: bytes, filename: str) -> Dic
     Detects headers, validates serials as TEXT, checks for duplicates,
     and returns preview statistics and row-level rejection details.
     """
-    raw_rows, headers = parse_device_file(file_bytes, filename)
+    try:
+        raw_rows, headers = parse_device_file(file_bytes, filename)
+    except Exception as ex:
+        return {
+            "ok": False,
+            "error": f"Failed to parse file '{filename}': {str(ex)}",
+            "total_rows": 0,
+            "valid_rows": [],
+            "rejected_rows": []
+        }
     if not headers:
         return {
             "ok": False,
@@ -150,7 +209,10 @@ def validate_device_import(db: Session, file_bytes: bytes, filename: str) -> Dic
         serial_val = row.get(field_mapping["serial"], "").strip()
         make_val = row.get(field_mapping.get("make", ""), "").strip() or "CHAINWAY"
         model_val = row.get(field_mapping.get("model", ""), "").strip() or "HHD"
-        dept_val = row.get(field_mapping.get("department", ""), "").strip() or "INV MTS"
+        dept_raw = row.get(field_mapping.get("department", ""), "").strip()
+        dept_val = dept_raw if dept_raw else "GENERAL"
+        dept_warn = "Blank Department: Defaulted to GENERAL (requires admin review)" if not dept_raw else None
+
         remarks_val = row.get(field_mapping.get("remarks", ""), "").strip() or "Working"
         date_val = row.get(field_mapping.get("inventory_date", ""), "").strip()
         sr_no_val = row.get(field_mapping.get("sr_no", ""), "").strip()
@@ -182,18 +244,22 @@ def validate_device_import(db: Session, file_bytes: bytes, filename: str) -> Dic
             continue
         seen_serials_in_file.add(serial_key)
 
-        # 3. Classify action (NEW vs UPDATE)
-        action_type = "UPDATE" if serial_key in existing_devices else "NEW"
-        current_status = existing_devices[serial_key].status if action_type == "UPDATE" else "Available"
+        # 3. Map status and condition from remarks strictly
+        mapped_status, mapped_condition, err_reason = map_device_condition_and_status(remarks_val)
+        if err_reason:
+            rejected_rows.append({
+                "row_number": line_no,
+                "serial": serial_val,
+                "make": make_val,
+                "model": model_val,
+                "department": dept_val,
+                "reason": err_reason
+            })
+            continue
 
-        # Determine condition from remarks
-        cond_lower = remarks_val.lower()
-        if "damage" in cond_lower:
-            parsed_condition = "Damaged"
-        elif "repair" in cond_lower:
-            parsed_condition = "Under Repair"
-        else:
-            parsed_condition = "Working"
+        # 4. Classify action (NEW vs UPDATE)
+        action_type = "UPDATE" if serial_key in existing_devices else "NEW"
+        current_status = existing_devices[serial_key].status if action_type == "UPDATE" else mapped_status
 
         valid_rows.append({
             "row_number": line_no,
@@ -202,9 +268,11 @@ def validate_device_import(db: Session, file_bytes: bytes, filename: str) -> Dic
             "make": make_val,
             "model": model_val,
             "department": dept_val,
+            "department_warning": dept_warn,
             "remarks": remarks_val,
-            "condition": parsed_condition,
-            "inventory_date": date_val or date.today().isoformat(),
+            "status": mapped_status,
+            "condition": mapped_condition,
+            "inventory_date": date_val or today_kolkata_str(),
             "action": action_type,
             "current_status": current_status
         })
@@ -268,7 +336,7 @@ def commit_device_import(db: Session, valid_rows: List[Dict[str, Any]], mode: st
             dev = db.query(Device).filter(Device.serial == r["serial"]).first()
             if not dev:
                 # Insert NEW
-                status_to_set = "Available"
+                status_to_set = r.get("status", "Available")
                 if r["condition"] == "Damaged":
                     status_to_set = "Damaged"
                 elif r["condition"] == "Under Repair":
@@ -311,7 +379,38 @@ def commit_device_import(db: Session, valid_rows: List[Dict[str, Any]], mode: st
                 dev.updated_at = now
                 updated_count += 1
 
+            # Create import-origin damage/repair record for Damaged or Under Repair devices
+            target_status = dev.status
+            if target_status in ("Damaged", "Under Repair"):
+                fault_lbl = "Not Working" if target_status == "Damaged" else "Under Repair"
+                existing_dmg = db.query(DamageReport).filter(
+                    DamageReport.serial == dev.serial,
+                    DamageReport.review_status.in_(["Open", "Pending Inspection", "Under Repair"])
+                ).first()
+                if not existing_dmg:
+                    dmg = DamageReport(
+                        report_time=now,
+                        report_date=r.get("inventory_date", "")[:10] or today_kolkata_str(),
+                        serial=dev.serial,
+                        employee_id=None,
+                        employee_name="",
+                        department=dev.department,
+                        fault_type=fault_lbl,
+                        details=r["remarks"] or f"Excel Inventory Import ({fault_lbl})",
+                        reported_by_id=None,
+                        reported_by_name="Excel Inventory Import",
+                        review_status="Pending Inspection"
+                    )
+                    db.add(dmg)
+
         db.commit()
+
+        # Automatic backup after large master data import (>= 50 records)
+        if len(valid_rows) >= 50:
+            try:
+                create_safe_backup("post_device_import")
+            except Exception:
+                pass
 
         return {
             "ok": True,
@@ -400,7 +499,16 @@ def validate_employee_import(db: Session, file_bytes: bytes, filename: str) -> D
     Preserves Employee IDs strictly as TEXT (leading zeros and letters),
     checks duplicates, and returns preview statistics.
     """
-    raw_rows, headers = parse_employee_file(file_bytes, filename)
+    try:
+        raw_rows, headers = parse_employee_file(file_bytes, filename)
+    except Exception as ex:
+        return {
+            "ok": False,
+            "error": f"Failed to parse file '{filename}': {str(ex)}",
+            "total_rows": 0,
+            "valid_rows": [],
+            "rejected_rows": []
+        }
     if not headers:
         return {
             "ok": False,
@@ -473,9 +581,17 @@ def validate_employee_import(db: Session, file_bytes: bytes, filename: str) -> D
             continue
         seen_ids_in_file.add(id_key)
 
-        # Parse active status
-        status_lower = status_raw.lower()
-        is_active = not (status_lower in ("inactive", "0", "false", "disabled", "no"))
+        # Parse active status strictly
+        is_active, status_display, err_reason = map_employee_status(status_raw)
+        if err_reason:
+            rejected_rows.append({
+                "row_number": line_no,
+                "employee_id": emp_id_val,
+                "name": name_val,
+                "department": dept_val,
+                "reason": err_reason
+            })
+            continue
 
         action_type = "UPDATE" if id_key in existing_employees else "NEW"
 
@@ -486,7 +602,7 @@ def validate_employee_import(db: Session, file_bytes: bytes, filename: str) -> D
             "name": name_val,
             "department": dept_val,
             "active": is_active,
-            "status_str": "Active" if is_active else "Inactive",
+            "status_str": status_display,
             "action": action_type
         })
 
@@ -560,6 +676,13 @@ def commit_employee_import(db: Session, valid_rows: List[Dict[str, Any]], mode: 
                 updated_count += 1
 
         db.commit()
+
+        # Automatic backup after large master data import (>= 50 records)
+        if len(valid_rows) >= 50:
+            try:
+                create_safe_backup("post_employee_import")
+            except Exception:
+                pass
 
         return {
             "ok": True,

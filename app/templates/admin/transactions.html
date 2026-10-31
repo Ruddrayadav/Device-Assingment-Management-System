@@ -52,9 +52,28 @@
       <label for="date_end">To Date</label>
       <input id="date_end" name="date_end" type="date" value="{{ date_end }}">
     </div>
+    <div class="form-group" style="width: 90px;">
+      <label for="page_size">Per Page</label>
+      <select id="page_size" name="page_size">
+        <option value="25" {{ 'selected' if page_size == 25 else '' }}>25</option>
+        <option value="50" {{ 'selected' if page_size == 50 else '' }}>50</option>
+        <option value="100" {{ 'selected' if page_size == 100 else '' }}>100</option>
+        <option value="200" {{ 'selected' if page_size == 200 else '' }}>200</option>
+      </select>
+    </div>
     <button class="btn btn-primary" type="submit">Filter</button>
     <a href="/admin/transactions" class="btn btn-secondary">Clear</a>
   </form>
+</div>
+
+<!-- Results Header & Pagination Summary -->
+<div class="flex-between mt-3 mb-2" style="font-size: 0.9rem; color: var(--text-muted);">
+  <div>
+    Showing <b>{{ transactions|length }}</b> of <b>{{ total_records }}</b> transactions (Page {{ page }} of {{ total_pages }})
+  </div>
+  <div>
+    Sorted by ID (Newest first)
+  </div>
 </div>
 
 <!-- Transactions Table -->
@@ -111,5 +130,28 @@
       </tbody>
     </table>
   </div>
+
+  {% if total_pages > 1 %}
+  <div class="flex-between" style="padding: 1rem; border-top: 1px solid var(--border); flex-wrap: wrap; gap: 0.75rem;">
+    <div style="font-size: 0.85rem; color: var(--text-muted);">
+      Page <b>{{ page }}</b> of <b>{{ total_pages }}</b> (Total: {{ total_records }} entries)
+    </div>
+    <div style="display: flex; gap: 0.35rem; align-items: center;">
+      {% if has_prev %}
+      <a href="?page=1&page_size={{ page_size }}&q={{ q }}&type_filter={{ type_filter }}&operator_filter={{ operator_filter }}&dept_filter={{ dept_filter }}&date_start={{ date_start }}&date_end={{ date_end }}" class="btn btn-sm btn-secondary" title="First Page">« First</a>
+      <a href="?page={{ prev_page }}&page_size={{ page_size }}&q={{ q }}&type_filter={{ type_filter }}&operator_filter={{ operator_filter }}&dept_filter={{ dept_filter }}&date_start={{ date_start }}&date_end={{ date_end }}" class="btn btn-sm btn-secondary" title="Previous Page">‹ Prev</a>
+      {% endif %}
+
+      <span style="padding: 0.25rem 0.6rem; font-weight: 700; background: var(--primary); color: #fff; border-radius: 4px; font-size: 0.85rem;">
+        {{ page }}
+      </span>
+
+      {% if has_next %}
+      <a href="?page={{ next_page }}&page_size={{ page_size }}&q={{ q }}&type_filter={{ type_filter }}&operator_filter={{ operator_filter }}&dept_filter={{ dept_filter }}&date_start={{ date_start }}&date_end={{ date_end }}" class="btn btn-sm btn-secondary" title="Next Page">Next ›</a>
+      <a href="?page={{ total_pages }}&page_size={{ page_size }}&q={{ q }}&type_filter={{ type_filter }}&operator_filter={{ operator_filter }}&dept_filter={{ dept_filter }}&date_start={{ date_start }}&date_end={{ date_end }}" class="btn btn-sm btn-secondary" title="Last Page">Last »</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
 </div>
 {% endblock %}

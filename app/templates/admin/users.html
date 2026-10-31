@@ -66,15 +66,29 @@
             <span class="badge {{ 'badge-available' if u.active else 'badge-damaged' }}">
               {{ 'Active' if u.active else 'Inactive' }}
             </span>
+            {% if u.is_locked %}
+            <span class="badge badge-damaged" title="Locked out due to repeated failed logins">
+              🔒 Locked ({{ u.lockout_remaining }}s)
+            </span>
+            {% endif %}
           </td>
           <td class="mono" style="font-size: 0.8rem;">{{ u.created_at|datetime12 }}</td>
           <td>
             {% if u.id != user.id %}
-            <form method="post" action="/admin/users/{{ u.id }}/toggle" style="display: inline;">
-              <button class="btn btn-sm {{ 'btn-danger' if u.active else 'btn-success' }}" type="submit">
-                {{ 'Deactivate' if u.active else 'Activate' }}
-              </button>
-            </form>
+            <div style="display: flex; gap: 0.35rem; align-items: center;">
+              {% if u.is_locked %}
+              <form method="post" action="/admin/users/{{ u.id }}/unlock" style="display: inline;">
+                <button class="btn btn-sm btn-warning" type="submit" title="Reset rate limiting lockout immediately">
+                  🔓 Unlock
+                </button>
+              </form>
+              {% endif %}
+              <form method="post" action="/admin/users/{{ u.id }}/toggle" style="display: inline;">
+                <button class="btn btn-sm {{ 'btn-danger' if u.active else 'btn-success' }}" type="submit">
+                  {{ 'Deactivate' if u.active else 'Activate' }}
+                </button>
+              </form>
+            </div>
             {% else %}
             <span class="text-muted" style="font-size: 0.8rem;">Current Account</span>
             {% endif %}

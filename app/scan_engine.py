@@ -8,7 +8,7 @@ from app.models import (
     Device, Employee, DeviceAssignment, Transaction,
     DamageReport, User
 )
-from app.config import DAMAGE_CATEGORIES
+from app.config import DAMAGE_CATEGORIES, now_kolkata, today_kolkata_str
 
 class ScanException(Exception):
     def __init__(self, message: str, title: str = "Scan Rejected", code: str = None):
@@ -27,37 +27,47 @@ def sanitize_code(code: str) -> str:
 def resolve_barcode(db: Session, code: str, prefer_type: Optional[str] = None) -> Tuple[Optional[Device], Optional[Employee]]:
     """
     Resolves barcode to Device or Employee.
-    Supports exact match and typed last-digits match for devices (minimum 4 digits).
+    Enforces strict barcode classification:
+    - Prefer exact full barcode matches.
+    - Never use ambiguous suffix matching to confuse entity types.
+    - If a barcode matches both employee and device records, raises explicit ambiguity error.
+    - Never issue or return a device based on an uncertain match.
     """
     code_clean = sanitize_code(code)
     if not code_clean:
         return None, None
 
-    # Exact employee search
+    # 1. Exact employee search
     emp = db.query(Employee).filter(func.lower(Employee.employee_id) == code_clean.lower()).first()
 
-    # Exact device search
+    # 2. Exact device search
     dev = db.query(Device).filter(func.lower(Device.serial) == code_clean.lower()).first()
 
-    # If not found exact device, check suffix if >= 4 chars
-    if not dev and len(code_clean) >= 4:
+    # 3. Barcode collision check: if barcode matches BOTH employee and device records
+    if emp and dev:
+        raise ScanException(
+            f"Ambiguous Barcode Collision: '{code_clean}' matches both Employee {emp.name} ({emp.employee_id}) and Device serial {dev.serial}. "
+            "Operation halted to prevent uncertain allocation. Please contact an administrator.",
+            "Ambiguous Barcode",
+            "AMBIGUOUS_BARCODE"
+        )
+
+    # 4. If exact employee was found, return employee only (never suffix match device)
+    if emp:
+        return None, emp
+
+    # 5. If exact device was found, return device only
+    if dev:
+        return dev, None
+
+    # 6. Fallback suffix matching for devices ONLY if explicitly preferred and strictly unique
+    if prefer_type == "device" and len(code_clean) >= 4:
         matches = db.query(Device).filter(Device.serial.ilike(f"%{code_clean}")).limit(2).all()
         if len(matches) == 1:
-            dev = matches[0]
+            return matches[0], None
 
-    # Conflict resolution if both match
-    if emp and dev:
-        if prefer_type == "device":
-            return dev, None
-        elif prefer_type == "employee":
-            return None, emp
-        else:
-            # By default prefer exact serial length
-            if len(dev.serial) == len(code_clean):
-                return dev, None
-            return None, emp
+    return None, None
 
-    return dev, emp
 
 def issue_device_atomic(
     db: Session,
@@ -71,15 +81,29 @@ def issue_device_atomic(
     Guarantees zero duplicate allocations. 24/7 continuous operation.
     """
     with SCAN_WRITE_LOCK:
-        # Check idempotency
+        now = now_kolkata()
+        date_str = today_kolkata_str()
+
+        if isinstance(operator, User):
+            op_id = operator.id
+            op_name = operator.full_name or operator.username
+        else:
+            op_id = int(operator) if isinstance(operator, int) else getattr(operator, "id", None)
+            op_name = getattr(operator, "full_name", None) or getattr(operator, "username", None) or str(operator)
+
+        # Check idempotency by key
         if idempotency_key:
             existing_tx = db.query(Transaction).filter(Transaction.idempotency_key == idempotency_key).first()
             if existing_tx:
+                dev_rec = db.query(Device).filter(Device.serial == existing_tx.serial).first()
                 return {
                     "action": "Issue",
                     "serial": existing_tx.serial,
                     "employee": {"id": existing_tx.employee_id, "name": existing_tx.employee_name, "dept": existing_tx.department},
-                    "message": f"Device {existing_tx.serial} already issued to {existing_tx.employee_name}."
+                    "device": {"serial": existing_tx.serial, "model": dev_rec.model if dev_rec else "", "cover_qty": existing_tx.cover_qty},
+                    "timestamp": existing_tx.transaction_time.strftime("%Y-%m-%d %I:%M:%S %p"),
+                    "operator": existing_tx.operator_name,
+                    "message": f"Device {existing_tx.serial} is already issued to {existing_tx.employee_name} (Idempotent retry)."
                 }
 
         # 1. Validate employee
@@ -95,6 +119,32 @@ def issue_device_atomic(
             raise ScanException("Device serial not found in Inventory.", "Device Not Found")
 
         if dev.status == "Issued":
+            if dev.assigned_employee_id == emp.employee_id:
+                # Idempotent re-scan of the same device for the same employee!
+                held_count = db.query(Device).filter(
+                    Device.assigned_employee_id == emp.employee_id,
+                    Device.status == "Issued"
+                ).count()
+                return {
+                    "action": "Issue",
+                    "serial": dev.serial,
+                    "idempotent_replay": True,
+                    "employee": {
+                        "id": emp.employee_id,
+                        "name": emp.name,
+                        "dept": emp.department,
+                        "held_count": held_count
+                    },
+                    "device": {
+                        "serial": dev.serial,
+                        "model": dev.model,
+                        "cover_qty": dev.cover_qty
+                    },
+                    "timestamp": now.strftime("%Y-%m-%d %I:%M:%S %p"),
+                    "operator": op_name,
+                    "message": f"Device {dev.serial} is already issued to {emp.name} ({emp.department})."
+                }
+
             holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
             holder_name = holder.name if holder else dev.assigned_employee_id
             raise ScanException(
@@ -107,16 +157,6 @@ def issue_device_atomic(
                 f"Device {dev.serial} is marked as '{dev.status}' and cannot be issued.",
                 "Device Unavailable"
             )
-
-        now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d")
-
-        if isinstance(operator, User):
-            op_id = operator.id
-            op_name = operator.full_name or operator.username
-        else:
-            op_id = int(operator) if isinstance(operator, int) else getattr(operator, "id", None)
-            op_name = getattr(operator, "full_name", None) or getattr(operator, "username", None) or str(operator)
 
         # 3. Create DeviceAssignment record
         assignment = DeviceAssignment(
@@ -195,15 +235,30 @@ def return_device_atomic(
     Zero need to scan employee ID again. 24/7 continuous operation.
     """
     with SCAN_WRITE_LOCK:
-        # Check idempotency
+        now = now_kolkata()
+        date_str = today_kolkata_str()
+
+        if isinstance(operator, User):
+            op_id = operator.id
+            op_name = operator.full_name or operator.username
+        else:
+            op_id = int(operator) if isinstance(operator, int) else getattr(operator, "id", None)
+            op_name = getattr(operator, "full_name", None) or getattr(operator, "username", None) or str(operator)
+
+        # Check idempotency by key
         if idempotency_key:
             existing_tx = db.query(Transaction).filter(Transaction.idempotency_key == idempotency_key).first()
             if existing_tx:
                 return {
                     "action": "Return",
                     "serial": existing_tx.serial,
+                    "condition": existing_tx.condition,
+                    "idempotent_replay": True,
                     "employee": {"id": existing_tx.employee_id, "name": existing_tx.employee_name, "dept": existing_tx.department},
-                    "message": f"Device {existing_tx.serial} already returned."
+                    "device": {"serial": existing_tx.serial, "status": "Available", "condition": existing_tx.condition},
+                    "timestamp": existing_tx.transaction_time.strftime("%Y-%m-%d %I:%M:%S %p"),
+                    "operator": existing_tx.operator_name,
+                    "message": f"Device {existing_tx.serial} was already returned (Idempotent retry)."
                 }
 
         dev = db.query(Device).filter(Device.serial == device_serial).with_for_update().first()
@@ -211,6 +266,31 @@ def return_device_atomic(
             raise ScanException("Device serial not found in Inventory.", "Device Not Found")
 
         if dev.status != "Issued":
+            # Check if this device was returned in the immediately preceding transaction
+            last_tx = db.query(Transaction).filter(
+                Transaction.serial == dev.serial
+            ).order_by(Transaction.id.desc()).first()
+            if last_tx and last_tx.transaction_type == "Return":
+                return {
+                    "action": "Return",
+                    "serial": dev.serial,
+                    "condition": dev.condition,
+                    "idempotent_replay": True,
+                    "employee": {
+                        "id": last_tx.employee_id,
+                        "name": last_tx.employee_name,
+                        "dept": last_tx.department
+                    },
+                    "device": {
+                        "serial": dev.serial,
+                        "status": dev.status,
+                        "condition": dev.condition
+                    },
+                    "timestamp": last_tx.transaction_time.strftime("%Y-%m-%d %I:%M:%S %p"),
+                    "operator": last_tx.operator_name,
+                    "message": f"Device {dev.serial} was already returned from {last_tx.employee_name} (Idempotent retry)."
+                }
+
             raise ScanException(
                 f"Device {dev.serial} is NOT ISSUED (Current status: {dev.status}). Nothing to return.",
                 "Device Not Issued"
@@ -220,16 +300,6 @@ def return_device_atomic(
         emp_name = emp.name if emp else "Unknown Worker"
         emp_dept = emp.department if emp else "Warehouse"
         emp_id = emp.employee_id if emp else (dev.assigned_employee_id or "UNKNOWN")
-
-        now = datetime.now()
-        date_str = now.strftime("%Y-%m-%d")
-
-        if isinstance(operator, User):
-            op_id = operator.id
-            op_name = operator.full_name or operator.username
-        else:
-            op_id = int(operator) if isinstance(operator, int) else getattr(operator, "id", None)
-            op_name = getattr(operator, "full_name", None) or getattr(operator, "username", None) or str(operator)
 
         # 1. Update active DeviceAssignment
         asgn = db.query(DeviceAssignment).filter(
@@ -250,7 +320,7 @@ def return_device_atomic(
             asgn.condition_on_return = final_condition
             asgn.remarks = remarks
 
-        # 2. Update Device status
+        # 2. Update Device status directly (atomic transition: never becomes Available if damaged)
         if final_condition == "Working":
             dev.status = "Available"
             dev.condition = "Working"
@@ -317,6 +387,7 @@ def return_device_atomic(
             "message": f"Returned from {emp_name} ({emp_dept})" + ("" if final_condition == "Working" else f" · Marked {final_condition}")
         }
 
+
 def process_scan_pipeline(
     db: Session,
     code: str,
@@ -340,6 +411,23 @@ def process_scan_pipeline(
             "message": "No barcode detected.",
             "pending": pending
         }
+
+    # Fast Idempotency Check by key
+    if idempotency_key:
+        existing_tx = db.query(Transaction).filter(Transaction.idempotency_key == idempotency_key).first()
+        if existing_tx:
+            dev_rec = db.query(Device).filter(Device.serial == existing_tx.serial).first()
+            return {
+                "ok": True,
+                "state": "done",
+                "title": f"Already Processed · {existing_tx.serial[-6:]}",
+                "message": f"Device {existing_tx.serial} is already {existing_tx.transaction_type.lower()}ed to/by {existing_tx.employee_name} (Idempotent retry).",
+                "action": existing_tx.transaction_type,
+                "device": {"serial": existing_tx.serial, "model": dev_rec.model if dev_rec else "", "cover_qty": existing_tx.cover_qty},
+                "employee": {"id": existing_tx.employee_id, "name": existing_tx.employee_name, "dept": existing_tx.department},
+                "pending": None,
+                "idempotent_replay": True
+            }
 
     p_type = pending.get("type") if pending else None
     p_code = sanitize_code(pending.get("code")) if pending else None
@@ -390,6 +478,7 @@ def process_scan_pipeline(
                 "device": res["device"],
                 "employee": res["employee"],
                 "can_flag": True,
+                "idempotent_replay": res.get("idempotent_replay", False),
                 "pending": None
             }
         except ScanException as ex:
@@ -407,6 +496,41 @@ def process_scan_pipeline(
     try:
         # Case 1: Device scanned
         if dev:
+            # If an employee was already pending, check for retried idempotent scan
+            if p_type == "employee" and p_code:
+                if dev.status == "Issued" and dev.assigned_employee_id == p_code:
+                    emp_holder = db.query(Employee).filter(Employee.employee_id == p_code).first()
+                    emp_hname = emp_holder.name if emp_holder else p_code
+                    return {
+                        "ok": True,
+                        "state": "done",
+                        "title": f"Already Issued · {dev.serial[-6:]}",
+                        "message": f"Device {dev.serial} is already issued to {emp_hname}.",
+                        "action": "Issue",
+                        "device": {"serial": dev.serial, "model": dev.model, "cover_qty": dev.cover_qty},
+                        "employee": {"id": p_code, "name": emp_hname, "dept": emp_holder.department if emp_holder else ""},
+                        "pending": None,
+                        "idempotent_replay": True
+                    }
+
+                res = issue_device_atomic(
+                    db=db,
+                    device_serial=dev.serial,
+                    employee_id=p_code,
+                    operator=operator,
+                    idempotency_key=idempotency_key
+                )
+                return {
+                    "ok": True,
+                    "state": "done",
+                    "title": f"Issued · {dev.serial[-6:]}",
+                    "message": res["message"],
+                    "action": "Issue",
+                    "device": res["device"],
+                    "employee": res["employee"],
+                    "pending": None
+                }
+
             if dev.status == "Issued":
                 holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
                 holder_name = holder.name if holder else dev.assigned_employee_id
@@ -427,39 +551,19 @@ def process_scan_pipeline(
                     "pending": pending
                 }
 
-            # If an employee was already pending, COMPLETE THE ISSUE IMMEDIATELY!
-            if p_type == "employee" and p_code:
-                res = issue_device_atomic(
-                    db=db,
-                    device_serial=dev.serial,
-                    employee_id=p_code,
-                    operator=operator,
-                    idempotency_key=idempotency_key
-                )
-                return {
-                    "ok": True,
-                    "state": "done",
-                    "title": f"Issued · {dev.serial[-6:]}",
-                    "message": res["message"],
-                    "action": "Issue",
-                    "device": res["device"],
-                    "employee": res["employee"],
-                    "pending": None
+            # Store device as pending, wait for employee scan
+            return {
+                "ok": True,
+                "state": "pending",
+                "title": f"Device Ready · {dev.serial[-6:]}",
+                "message": f"Device {dev.serial} ready ({dev.model}). Now scan Worker ID barcode.",
+                "action": "PendingDevice",
+                "pending": {
+                    "type": "device",
+                    "code": dev.serial,
+                    "label": f"Device: {dev.serial}"
                 }
-            else:
-                # Store device as pending, wait for employee scan
-                return {
-                    "ok": True,
-                    "state": "pending",
-                    "title": f"Device Ready · {dev.serial[-6:]}",
-                    "message": f"Device {dev.serial} ready ({dev.model}). Now scan Worker ID barcode.",
-                    "action": "PendingDevice",
-                    "pending": {
-                        "type": "device",
-                        "code": dev.serial,
-                        "label": f"Device: {dev.serial}"
-                    }
-                }
+            }
 
         # Case 2: Employee scanned
         if emp:
@@ -472,8 +576,22 @@ def process_scan_pipeline(
                     "pending": pending
                 }
 
-            # If a device was already pending, COMPLETE THE ISSUE IMMEDIATELY!
+            # If a device was already pending, check for retried idempotent scan
             if p_type == "device" and p_code:
+                p_dev = db.query(Device).filter(Device.serial == p_code).first()
+                if p_dev and p_dev.status == "Issued" and p_dev.assigned_employee_id == emp.employee_id:
+                    return {
+                        "ok": True,
+                        "state": "done",
+                        "title": f"Already Issued · {p_code[-6:]}",
+                        "message": f"Device {p_code} is already issued to {emp.name}.",
+                        "action": "Issue",
+                        "device": {"serial": p_code, "model": p_dev.model, "cover_qty": p_dev.cover_qty},
+                        "employee": {"id": emp.employee_id, "name": emp.name, "dept": emp.department},
+                        "pending": None,
+                        "idempotent_replay": True
+                    }
+
                 res = issue_device_atomic(
                     db=db,
                     device_serial=p_code,
@@ -510,6 +628,7 @@ def process_scan_pipeline(
                         "label": f"{emp.name} ({emp.department})"
                     }
                 }
+
 
     except ScanException as ex:
         return {

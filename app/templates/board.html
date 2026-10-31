@@ -178,9 +178,23 @@
   updateClock();
   setInterval(updateClock, 1000);
 
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
+  }
+
   async function pollBoard() {
     try {
       const res = await fetch(`/api/board/live?v=${encodeURIComponent(currentVersion)}`);
+      if (res.status === 401 || res.status === 307) {
+        window.location.href = '/login?next=/board';
+        return;
+      }
       const data = await res.json();
       if (data.changed && data.board) {
         currentVersion = data.board.version;
@@ -194,20 +208,20 @@
         // Render Available
         const availHtml = data.board.available.map(d => `
           <div class="device-tile available">
-            <div class="tile-serial">${d.serial.slice(-6)}</div>
-            <div class="text-muted mono" style="font-size: 0.7rem;">${d.serial}</div>
+            <div class="tile-serial">${escapeHtml(d.serial.slice(-6))}</div>
+            <div class="text-muted mono" style="font-size: 0.7rem;">${escapeHtml(d.serial)}</div>
             <div class="tile-dept mt-3">Ready in stock</div>
           </div>
         `).join('') || '<div class="text-muted">No devices available currently.</div>';
         document.getElementById('avail-container').innerHTML = availHtml;
 
-        // Render Allotted
+        // Render Allotted (Do not expose sensitive worker ID numbers)
         const allotHtml = data.board.allotted.map(d => `
           <div class="device-tile issued">
-            <div class="tile-serial">${d.serial.slice(-6)}</div>
-            <div class="tile-user">${d.ename || d.eid}</div>
-            <div class="tile-dept">${d.dept || ''}</div>
-            <div class="text-muted mono mt-3" style="font-size: 0.7rem;">${d.serial}</div>
+            <div class="tile-serial">${escapeHtml(d.serial.slice(-6))}</div>
+            <div class="tile-user">${escapeHtml(d.ename || 'Assigned')}</div>
+            <div class="tile-dept">${escapeHtml(d.dept || '')}</div>
+            <div class="text-muted mono mt-3" style="font-size: 0.7rem;">${escapeHtml(d.serial)}</div>
           </div>
         `).join('') || '<div class="text-muted">No devices currently allotted.</div>';
         document.getElementById('allot-container').innerHTML = allotHtml;
@@ -217,15 +231,15 @@
         if (ntBody) {
           ntBody.innerHTML = data.board.not_today.map(d => `
             <tr>
-              <td class="mono"><b>${d.serial}</b></td>
+              <td class="mono"><b>${escapeHtml(d.serial)}</b></td>
               <td>
                 <span class="badge ${d.status === 'Issued' ? 'badge-issued' : 'badge-available'}">
-                  ${d.status}
+                  ${escapeHtml(d.status)}
                 </span>
               </td>
-              <td>${d.ename || 'In Stock'}</td>
-              <td>${d.dept || '—'}</td>
-              <td class="mono">${d.last_ho_fmt || d.last_ho || 'Never'}</td>
+              <td>${escapeHtml(d.ename || 'In Stock')}</td>
+              <td>${escapeHtml(d.dept || '—')}</td>
+              <td class="mono">${escapeHtml(d.last_ho_fmt || d.last_ho || 'Never')}</td>
             </tr>
           `).join('') || '<tr><td colspan="5" class="text-muted">Every device in the warehouse was handled today.</td></tr>';
         }
