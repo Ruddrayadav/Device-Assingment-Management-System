@@ -459,11 +459,12 @@ def process_scan_pipeline(
         existing_tx = db.query(Transaction).filter(Transaction.idempotency_key == idempotency_key).first()
         if existing_tx:
             dev_rec = db.query(Device).filter(Device.serial == existing_tx.serial).first()
+            tx_verb = "issued" if existing_tx.transaction_type.lower() == "issue" else "returned"
             return {
                 "ok": True,
                 "state": "done",
                 "title": f"Already Processed · {existing_tx.serial[-6:]}",
-                "message": f"Device {existing_tx.serial} is already {existing_tx.transaction_type.lower()}ed to/by {existing_tx.employee_name} (Idempotent retry).",
+                "message": f"Device {existing_tx.serial} is already {tx_verb} to/by {existing_tx.employee_name} (Idempotent retry).",
                 "action": existing_tx.transaction_type,
                 "device": {"serial": existing_tx.serial, "model": dev_rec.model if dev_rec else "", "cover_qty": existing_tx.cover_qty},
                 "employee": {"id": existing_tx.employee_id, "name": existing_tx.employee_name, "dept": existing_tx.department},
@@ -719,7 +720,7 @@ def process_scan_pipeline(
                         warn_time = pending.get("warn_time") if pending else None
                         now_t = time.time()
                         is_confirmed = bool(
-                            pending.get("override_confirmed") or
+                            (pending.get("override_confirmed") if pending else False) or
                             (warn_emp == p_code and warn_time is not None and (now_t - float(warn_time)) <= 10.0)
                         )
                         held_serials = ", ".join([d.serial for d in held_devs])
@@ -841,7 +842,7 @@ def process_scan_pipeline(
                         warn_time = pending.get("warn_time") if pending else None
                         now_t = time.time()
                         is_confirmed = bool(
-                            pending.get("override_confirmed") or
+                            (pending.get("override_confirmed") if pending else False) or
                             (warn_emp == emp.employee_id and warn_time is not None and (now_t - float(warn_time)) <= 10.0)
                         )
                         held_serials = ", ".join([d.serial for d in held_devs])
@@ -903,7 +904,7 @@ def process_scan_pipeline(
                     warn_time = pending.get("warn_time") if pending else None
                     now_t = time.time()
                     is_confirmed = bool(
-                        pending.get("override_confirmed") or
+                        (pending.get("override_confirmed") if pending else False) or
                         (warn_emp == emp.employee_id and warn_time is not None and (now_t - float(warn_time)) <= 10.0)
                     )
                     held_serials = ", ".join([d.serial for d in held_devs])
