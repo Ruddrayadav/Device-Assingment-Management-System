@@ -10,7 +10,7 @@
     </button>
     <button class="mode-btn" id="btn-mode-return" type="button">
       🔄 RETURN MODE (F4)
-      <div style="font-size: 0.8rem; font-weight: normal; margin-top: 0.2rem; opacity: 0.85;">Scan ONLY Device barcode</div>
+      <div style="font-size: 0.8rem; font-weight: normal; margin-top: 0.2rem; opacity: 0.85;">Scan Worker ID + Device</div>
     </button>
   </div>
 
@@ -46,12 +46,12 @@
       <div class="kpi-value" id="stat-op-returned">{{ op_returned if op_returned is defined else 0 }}</div>
     </div>
     <div class="kpi-card">
-      <div class="kpi-label">Fleet Available</div>
-      <div class="kpi-value" id="stat-fleet-avail">{{ board.counts.available }}</div>
+      <div class="kpi-label">Available Devices</div>
+      <div class="kpi-value" id="stat-dev-avail">{{ board.counts.available }}</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">Currently Outstanding</div>
-      <div class="kpi-value" id="stat-fleet-issued">{{ outstanding_count if outstanding_count is defined else board.counts.allotted }}</div>
+      <div class="kpi-value" id="stat-dev-issued">{{ outstanding_count if outstanding_count is defined else board.counts.allotted }}</div>
     </div>
     <div class="kpi-card">
       <div class="kpi-label">My Damaged Received</div>
@@ -184,7 +184,7 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/scanner.js"></script>
-<script src="/static/js/operator.js"></script>
+<script src="/static/js/scanner.js?v=3.0.5"></script>
+<script src="/static/js/operator.js?v=3.0.5"></script>
 {% endblock %}
 

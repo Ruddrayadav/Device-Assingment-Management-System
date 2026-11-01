@@ -1,0 +1,160 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">📜 Audit & Activity History</h1>
+    <div class="text-muted">Immutable, append-only operational audit trail tracking every system event, scan, transaction, and administrative change</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/admin/audit/export?format=xlsx&time_range={{ current_range }}&q={{ q }}&action_filter={{ action_filter }}&status_filter={{ status_filter }}" class="btn btn-secondary">📥 Export Excel (.xlsx)</a>
+    <a href="/admin/audit/export?format=csv&time_range={{ current_range }}&q={{ q }}&action_filter={{ action_filter }}&status_filter={{ status_filter }}" class="btn btn-secondary">Export CSV</a>
+  </div>
+</div>
+
+<!-- Quick Date Range Tabs -->
+<div class="mode-bar" style="margin-bottom: 1rem; max-width: 600px;">
+  <a href="/admin/audit?time_range=today&q={{ q }}" class="mode-btn {{ 'active-issue' if current_range == 'today' else '' }}" style="text-decoration: none; padding: 0.6rem 1rem; font-size: 0.85rem;">Today</a>
+  <a href="/admin/audit?time_range=7d&q={{ q }}" class="mode-btn {{ 'active-issue' if current_range == '7d' else '' }}" style="text-decoration: none; padding: 0.6rem 1rem; font-size: 0.85rem;">Last 7 Days</a>
+  <a href="/admin/audit?time_range=30d&q={{ q }}" class="mode-btn {{ 'active-issue' if current_range == '30d' else '' }}" style="text-decoration: none; padding: 0.6rem 1rem; font-size: 0.85rem;">Last 30 Days (Default)</a>
+  <a href="/admin/audit?time_range=all&q={{ q }}" class="mode-btn {{ 'active-issue' if current_range == 'all' else '' }}" style="text-decoration: none; padding: 0.6rem 1rem; font-size: 0.85rem;">All Historical</a>
+</div>
+
+<!-- Detailed Filter Form -->
+<div class="card" style="margin-bottom: 1.25rem;">
+  <form method="get" action="/admin/audit" style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
+    <input type="hidden" name="time_range" value="{{ current_range }}">
+    
+    <div class="form-group" style="flex: 2; min-width: 200px; margin-bottom: 0;">
+      <label for="q">Free-text Search (Device, Worker, Operator, Details)</label>
+      <input id="q" name="q" value="{{ q }}" placeholder="e.g. 127, Ajay, SCAN_REJECTED">
+    </div>
+
+    <div class="form-group" style="min-width: 140px; margin-bottom: 0;">
+      <label for="action_filter">Action / Event</label>
+      <select id="action_filter" name="action_filter">
+        <option value="">All Actions</option>
+        {% for a in all_actions %}
+        <option value="{{ a }}" {{ 'selected' if action_filter == a else '' }}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-group" style="min-width: 120px; margin-bottom: 0;">
+      <label for="role_filter">User Role</label>
+      <select id="role_filter" name="role_filter">
+        <option value="">All Roles</option>
+        <option value="admin" {{ 'selected' if role_filter == 'admin' else '' }}>Admin</option>
+        <option value="inventory_manager" {{ 'selected' if role_filter == 'inventory_manager' else '' }}>Inventory Manager</option>
+        <option value="operator" {{ 'selected' if role_filter == 'operator' else '' }}>Operator</option>
+      </select>
+    </div>
+
+    <div class="form-group" style="min-width: 120px; margin-bottom: 0;">
+      <label for="status_filter">Result</label>
+      <select id="status_filter" name="status_filter">
+        <option value="">All Results</option>
+        <option value="SUCCESS" {{ 'selected' if status_filter == 'SUCCESS' else '' }}>SUCCESS</option>
+        <option value="FAILED" {{ 'selected' if status_filter == 'FAILED' else '' }}>FAILED</option>
+      </select>
+    </div>
+
+    <div class="form-group" style="min-width: 130px; margin-bottom: 0;">
+      <label for="start_date">From Date</label>
+      <input id="start_date" type="date" name="start_date" value="{{ start_date }}">
+    </div>
+
+    <div class="form-group" style="min-width: 130px; margin-bottom: 0;">
+      <label for="end_date">To Date</label>
+      <input id="end_date" type="date" name="end_date" value="{{ end_date }}">
+    </div>
+
+    <button class="btn btn-primary" type="submit">Filter Audit Logs</button>
+    <a href="/admin/audit" class="btn btn-secondary">Reset</a>
+  </form>
+</div>
+
+<!-- Audit Log Table -->
+<div class="card">
+  <div class="card-title flex-between">
+    <span>📋 Immutable Audit Trail ({{ total_count }} matching entries)</span>
+    <span class="text-muted" style="font-size: 0.85rem; font-weight: normal;">Page {{ page }} of {{ total_pages }} (Showing {{ logs|length }} entries)</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Event ID</th>
+          <th>Timestamp (IST)</th>
+          <th>Operator / User</th>
+          <th>Role</th>
+          <th>Action</th>
+          <th>Target</th>
+          <th>Result</th>
+          <th>Details & Notes</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for l in logs %}
+        <tr>
+          <td class="mono" style="font-size: 0.8rem; color: var(--text-dim);">#{{ l.id }}</td>
+          <td class="mono" style="font-size: 0.85rem;">{{ l.time_fmt }}</td>
+          <td><b>{{ l.username }}</b></td>
+          <td>
+            <span class="badge 
+              {% if l.role == 'admin' %}badge-secondary
+              {% elif l.role == 'inventory_manager' %}badge-issued
+              {% else %}badge-available{% endif %}">
+              {{ l.role }}
+            </span>
+          </td>
+          <td class="mono" style="font-size: 0.85rem; font-weight: 600;">{{ l.action }}</td>
+          <td class="mono" style="font-size: 0.85rem;">
+            {% if l.target_type == 'DEVICE' and l.target_id %}
+            <a href="/admin/device/timeline/{{ l.target_id }}" style="text-decoration: underline; color: inherit;"><b>{{ l.target_id }}</b></a>
+            {% else %}
+            {{ l.target_type }}: {{ l.target_id }}
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge {{ 'badge-available' if l.status == 'SUCCESS' else 'badge-damaged' }}">
+              {{ l.status }}
+            </span>
+          </td>
+          <td style="font-size: 0.875rem; max-width: 380px; word-break: break-word;">
+            {{ l.details }}
+            {% if l.reason %}
+            <div class="text-muted" style="font-size: 0.75rem; margin-top: 0.2rem;">Reason: {{ l.reason }}</div>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-muted" style="text-align: center; padding: 2rem;">No audit records match the current filter criteria.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <!-- Pagination Controls -->
+  {% if total_pages > 1 %}
+  <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-light);">
+    <div>
+      {% if page > 1 %}
+      <a href="/admin/audit?page={{ page - 1 }}&time_range={{ current_range }}&q={{ q }}&action_filter={{ action_filter }}&status_filter={{ status_filter }}&role_filter={{ role_filter }}&start_date={{ start_date }}&end_date={{ end_date }}" class="btn btn-sm btn-secondary">← Previous Page</a>
+      {% endif %}
+    </div>
+    <div class="text-muted" style="font-size: 0.875rem;">
+      Page <b>{{ page }}</b> of <b>{{ total_pages }}</b>
+    </div>
+    <div>
+      {% if page < total_pages %}
+      <a href="/admin/audit?page={{ page + 1 }}&time_range={{ current_range }}&q={{ q }}&action_filter={{ action_filter }}&status_filter={{ status_filter }}&role_filter={{ role_filter }}&start_date={{ start_date }}&end_date={{ end_date }}" class="btn btn-sm btn-secondary">Next Page →</a>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}
+

@@ -2,16 +2,16 @@ import os
 import socket
 from datetime import datetime
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, Request
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import HTMLResponse, RedirectResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
 
 from app.config import SERVER_HOST, SERVER_PORT, BASE_DIR, DATA_DIR, LOGS_DIR, BACKUP_DIR, DB_PATH
-from app.database import engine, Base, SessionLocal
+from app.database import engine, Base, SessionLocal, verify_database_state
 from app.models import User, Employee, Device
-from app.auth import hash_password
+from app.auth import is_initial_setup_required
 from app.migration import run_schema_migration
 from app.routes import (
     auth_routes, operator_routes, scan_routes,
@@ -57,65 +57,80 @@ def get_lan_ips():
     return ips or ["127.0.0.1"]
 
 def seed_initial_data_if_needed():
-    """Seeds minimal initial administrator and operators only if database is completely empty."""
-    db = SessionLocal()
-    try:
-        user_count = db.query(User).count()
-        now = datetime.now()
-        if user_count == 0:
-            admin_user = User(
-                username="hhdadmin",
-                password_hash=hash_password("admin12345"),
-                full_name="Warehouse Administrator",
-                role="admin",
-                active=True,
-                created_at=now,
-                updated_at=now
-            )
-            op1 = User(
-                username="operator1",
-                password_hash=hash_password("operator123"),
-                full_name="Rahul (Operator 1)",
-                role="operator",
-                active=True,
-                created_at=now,
-                updated_at=now
-            )
-            op2 = User(
-                username="operator2",
-                password_hash=hash_password("operator123"),
-                full_name="Amit (Operator 2)",
-                role="operator",
-                active=True,
-                created_at=now,
-                updated_at=now
-            )
-            db.add_all([admin_user, op1, op2])
-            db.commit()
-    finally:
-        db.close()
+    """Deprecated: Insecure automatic default credential creation has been permanently removed.
+    First-time administrator setup is conducted interactively via /setup or setup_admin.py."""
+    return None
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # 1. Run safe schema migration for existing databases
-    run_schema_migration()
-    # 2. Ensure all tables and indexes exist
-    Base.metadata.create_all(bind=engine)
-    # 3. Seed minimal accounts if fresh
-    seed_initial_data_if_needed()
+    # 1. Safely verify database health and existence
+    db_state = verify_database_state()
+    if db_state["status"] == "CORRUPT":
+        print("\n" + "!" * 68)
+        print(" [CRITICAL DATABASE ERROR] DATABASE FILE CORRUPTION DETECTED")
+        print("!" * 68)
+        print(f" Database Location: {db_state.get('db_path', DB_PATH)}")
+        print(f" Error: {db_state.get('error', 'Integrity check failed')}")
+        print(" System startup aborted to prevent data loss.")
+        print(" Recovery: Restore the most recent valid backup from the backups directory.")
+        print("!" * 68 + "\n")
+        raise RuntimeError(f"Database corruption detected: {db_state.get('error')}")
+
+    if db_state["status"] == "UNAVAILABLE":
+        print("\n" + "!" * 68)
+        print(" [CRITICAL DATABASE ERROR] DATABASE FILE INACCESSIBLE")
+        print("!" * 68)
+        print(f" Database Location: {db_state.get('db_path', DB_PATH)}")
+        print(f" Error: {db_state.get('error', 'Lock or permission error')}")
+        print(" System startup aborted. Check file permissions or ensure another process")
+        print(" does not hold an exclusive lock on the database file.")
+        print("!" * 68 + "\n")
+        raise RuntimeError(f"Database unavailable: {db_state.get('error')}")
+
+    if db_state["status"] == "FRESH":
+        # Fresh installation: safely initialize table schema
+        Base.metadata.create_all(bind=engine)
+    elif db_state["status"] in ("OPERATIONAL", "INITIALIZING"):
+        # Existing database: run safe migrations then ensure all tables/indexes exist
+        run_schema_migration()
+        Base.metadata.create_all(bind=engine)
+
+    # 2. Check if administrator setup is required
+    db = SessionLocal()
+    try:
+        setup_required = is_initial_setup_required(db)
+    finally:
+        db.close()
 
     lan_ips = get_lan_ips()
     primary_ip = lan_ips[0]
-    print("\n" + "=" * 68)
-    print(" HHD DEVICE MANAGEMENT SYSTEM — VERSION 3.0 (24/7 CONTINUOUS)")
-    print("=" * 68)
-    print(f" Database Location:   {DB_PATH}")
-    print(f" Local Access:        http://127.0.0.1:{SERVER_PORT}")
-    print(f" LAN Access (PCs):    http://{primary_ip}:{SERVER_PORT}")
-    print(f" Wall Display Board:  http://{primary_ip}:{SERVER_PORT}/board")
-    print(f" Excel Master Import: http://{primary_ip}:{SERVER_PORT}/admin/import")
-    print(" Administrator Setup: Run setup_admin.py to create/manage admin credentials")
-    print("=" * 68 + "\n")
+
+    if setup_required:
+        print("\n" + "=" * 68)
+        print(" HHD SERVER HANDOVER SYSTEM — FIRST-TIME SETUP REQUIRED")
+        print("=" * 68)
+        print(f" Database Location:   {DB_PATH}")
+        print(" Status:              Fresh installation detected. No Administrator exists.")
+        print(f" Setup URL (Host):    http://127.0.0.1:{SERVER_PORT}/setup")
+        print("")
+        print(" First-time setup required.")
+        print(f" Open http://127.0.0.1:{SERVER_PORT}/setup in your browser to create your Administrator account.")
+        print("")
+        print(" Note: Operator PCs on LAN will be paused until setup completes.")
+        print(f" CLI Alternative:     python setup_admin.py")
+        print("=" * 68 + "\n")
+    else:
+        print("\n" + "=" * 68)
+        print(" HHD SERVER HANDOVER SYSTEM — VERSION 3.0 (24/7 CONTINUOUS)")
+        print("=" * 68)
+        print(f" Database Location:   {DB_PATH}")
+        print(f" Local Access:        http://127.0.0.1:{SERVER_PORT}")
+        print(f" LAN Access (PCs):    http://{primary_ip}:{SERVER_PORT}")
+        print(f" Wall Display Board:  http://{primary_ip}:{SERVER_PORT}/board")
+        print(f" Excel Master Import: http://{primary_ip}:{SERVER_PORT}/admin/import")
+        print(" Security Status:     Administrator configured · Setup endpoint locked")
+        print(" Normal operation:    ACTIVE (Ready for scanning)")
+        print("=" * 68 + "\n")
     yield
 
 app = FastAPI(
@@ -141,6 +156,8 @@ async def security_headers_middleware(request: Request, call_next):
         "font-src 'self'; "
         "frame-ancestors 'none';"
     )
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, must-revalidate"
     return response
 
 # Mount Static Files
@@ -155,11 +172,32 @@ app.include_router(report_routes.router)
 app.include_router(backup_routes.router)
 app.include_router(import_routes.router)
 
-# Global 404 / Error Handlers
+# Global Exception Handlers
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    # If 503 on a non-API web request, show the remote setup holding page
+    if exc.status_code == 503 and not request.url.path.startswith("/api/"):
+        return templates.TemplateResponse(
+            request=request,
+            name="setup_required_lan.html",
+            context={
+                "title": "Server Setup Required - HHD System",
+                "hide_nav": True,
+                "detail": exc.detail
+            },
+            status_code=503
+        )
+    if exc.status_code in (301, 302, 303, 307, 308) and exc.headers and "Location" in exc.headers:
+        return RedirectResponse(url=exc.headers["Location"], status_code=exc.status_code)
+    if request.url.path.startswith("/api/"):
+        return JSONResponse(status_code=exc.status_code, content={"ok": False, "detail": exc.detail, "message": exc.detail})
+    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}, headers=getattr(exc, "headers", None))
+
 @app.exception_handler(404)
 async def not_found_handler(request: Request, exc):
     if request.url.path.startswith("/api/"):
-        return {"ok": False, "message": "Resource not found"}
+        detail_msg = getattr(exc, "detail", "Resource not found")
+        return JSONResponse(status_code=404, content={"ok": False, "detail": detail_msg, "message": detail_msg})
     return templates.TemplateResponse(request=request, name="base.html", context={
         "title": "Page Not Found",
         "hide_nav": False

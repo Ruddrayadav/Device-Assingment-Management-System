@@ -1,11 +1,11 @@
 from pathlib import Path
-from fastapi import APIRouter, Request, Depends
+from fastapi import APIRouter, Request, Depends, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
 from app.database import get_db
 from app.models import User, Transaction, DamageReport, AuditLog, DeviceAssignment
-from app.auth import get_current_user_optional, require_user
+from app.auth import get_current_user_optional, require_user, is_initial_setup_required, is_local_client
 from app.routes.scan_routes import get_live_board_data
 from app.config import DAMAGE_CATEGORIES, today_kolkata_str, now_kolkata
 
@@ -19,6 +19,20 @@ async def operator_station(
     request: Request,
     db: Session = Depends(get_db)
 ):
+    if is_initial_setup_required(db):
+        if is_local_client(request):
+            return RedirectResponse("/setup", status_code=status.HTTP_302_FOUND)
+        else:
+            return templates.TemplateResponse(
+                request=request,
+                name="setup_required_lan.html",
+                context={
+                    "title": "Server Setup Required - HHD System",
+                    "hide_nav": True
+                },
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE
+            )
+
     user = get_current_user_optional(request, db)
     if not user:
         return RedirectResponse("/login?next=/", status_code=302)

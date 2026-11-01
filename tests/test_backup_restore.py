@@ -13,7 +13,7 @@ from app.database import engine, Base, SessionLocal
 from app.models import User, Device, Employee
 from app.backup import create_safe_backup, list_backups, verify_backup_integrity, restore_backup
 from app.auth import hash_password
-from main import seed_initial_data_if_needed
+from tests.conftest import seed_initial_data_if_needed
 
 class BackupRestoreTestSuite(unittest.TestCase):
 

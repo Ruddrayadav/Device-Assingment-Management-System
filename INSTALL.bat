@@ -43,11 +43,15 @@ if %errorlevel% neq 0 (
   exit /b 1
 )
 
-echo [3/3] Initializing database and default accounts...
-".venv\Scripts\python.exe" -c "from main import seed_initial_data_if_needed, Base, engine; Base.metadata.create_all(bind=engine); seed_initial_data_if_needed(); print('Database ready.')"
+echo [3/3] Initializing database and verifying schema...
+".venv\Scripts\python.exe" -c "from app.database import Base, engine; Base.metadata.create_all(bind=engine); print('Database ready.')"
 
 echo ==========================================================
 echo  INSTALLATION COMPLETE!
-echo  You can now start the application anytime by double-clicking Start.bat
+echo.
+echo  NEXT STEPS:
+echo  1. Launch the server anytime by double-clicking Start.bat
+echo  2. On fresh installations, open http://127.0.0.1:8000/setup
+echo     in your browser to create your company's Administrator.
 echo ==========================================================
 pause

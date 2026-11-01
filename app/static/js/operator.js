@@ -21,9 +21,9 @@
   const statOpReturned = document.getElementById('stat-op-returned');
   const statOpDamaged = document.getElementById('stat-op-damaged');
   const statOpRejected = document.getElementById('stat-op-rejected');
-  const statFleetAvail = document.getElementById('stat-fleet-avail');
-  const statFleetIssued = document.getElementById('stat-fleet-issued');
-  const statFleetDamaged = document.getElementById('stat-fleet-damaged');
+  const statDevAvail = document.getElementById('stat-dev-avail');
+  const statDevIssued = document.getElementById('stat-dev-issued');
+  const statDevDamaged = document.getElementById('stat-dev-damaged');
 
   let currentMode = 'Issue'; // 'Issue' or 'Return'
   let pendingState = null;   // { type: 'employee'|'device', code: string, label: string }
@@ -55,11 +55,12 @@
     }
   }
 
-  // Initialize Scanner Engine
+  // Initialize Zero-Enter Scanner Engine
   const scanner = new BarcodeScannerEngine({
     inputElement: scanInput,
-    minBarcodeLength: 4,
-    burstTimeoutMs: 65,
+    minBarcodeLength: 2,
+    burstTimeoutMs: 70,
+    manualDebounceMs: 320,
     onScanComplete: (code) => enqueueScan(code)
   });
 
@@ -78,8 +79,8 @@
     } else {
       btnIssue.className = 'mode-btn';
       btnReturn.className = 'mode-btn active-return';
-      scanInput.placeholder = 'Return Mode: Scan ONLY Device barcode';
-      setStatus('idle', 'Return Mode Active', 'Scan device barcode alone. Assigned worker is detected automatically.');
+      scanInput.placeholder = 'Return Mode: Scan Worker ID or Device barcode';
+      setStatus('idle', 'Return Mode Active', 'Scan Worker ID + Device barcode (verifies assigned worker)');
     }
     scanner.ensureFocus();
   }
@@ -179,7 +180,8 @@
         code: code,
         mode: currentMode,
         pending: pendingState ? { type: pendingState.type, code: pendingState.code } : null,
-        idempotency_key: 'scan_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7)
+        idempotency_key: 'scan_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+        strict_two_scan: true
       };
 
       const res = await fetch('/api/scan', {
@@ -253,7 +255,7 @@
       const data = await res.json();
       if (data.ok) {
         scanner.playSuccess();
-        setStatus('success', 'Device Added to Fleet', data.message);
+        setStatus('success', 'Device Added to Inventory', data.message);
         if (data.board) updateBoard(data.board);
       } else {
         scanner.playError();
@@ -339,9 +341,9 @@
 
   function updateBoard(board) {
     boardVersion = board.version;
-    if (statFleetAvail) statFleetAvail.textContent = board.counts.available;
-    if (statFleetIssued) statFleetIssued.textContent = board.counts.allotted;
-    if (statFleetDamaged) statFleetDamaged.textContent = board.counts.unavailable;
+    if (statDevAvail) statDevAvail.textContent = board.counts.available;
+    if (statDevIssued) statDevIssued.textContent = board.counts.allotted;
+    if (statDevDamaged) statDevDamaged.textContent = board.counts.unavailable;
 
     // Render Recent Activity Feed
     if (recentFeed && board.recent) {

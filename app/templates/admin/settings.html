@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">⚙️ Application & Operational Settings</h1>
+    <div class="text-muted">Configure 24/7 continuous operations parameters, reporting cutoffs, and system defaults</div>
+  </div>
+</div>
+
+<div style="max-width: 650px;">
+  <div class="card">
+    <div class="card-title">🕒 Daily Reporting Cutoff Time</div>
+    <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1.25rem;">
+      The company operates 24/7 with <b>no formal shifts</b>. The daily cutoff time determines when unreturned handheld devices appear on the <b>Outstanding Devices Report</b>. Devices unreturned past this cutoff are flagged for investigation.
+    </p>
+
+    <form method="post" action="/admin/settings">
+      <div class="form-group">
+        <label for="daily_cutoff_time">Daily Reporting Cutoff Time (HH:MM, 24-hour format) *</label>
+        <input 
+          id="daily_cutoff_time" 
+          name="daily_cutoff_time" 
+          type="time" 
+          value="{{ current_cutoff }}" 
+          required 
+          style="max-width: 200px;"
+        >
+        <div class="text-muted" style="font-size: 0.8rem; margin-top: 0.35rem;">Current configured cutoff: <b>{{ current_cutoff }} (Asia/Kolkata)</b></div>
+      </div>
+
+      <div style="margin-top: 1.5rem;">
+        <button class="btn btn-primary" type="submit">Save Cutoff Setting</button>
+      </div>
+    </form>
+  </div>
+
+  <div class="card" style="margin-top: 1.25rem; border-left: 4px solid var(--accent-blue);">
+    <div class="card-title">ℹ️ Continuous Operations Architecture</div>
+    <ul style="font-size: 0.875rem; color: var(--text-dim); padding-left: 1.25rem; line-height: 1.6;">
+      <li><b>Zero Shifts:</b> The system operates 24/7 continuously without morning, evening, or night shift splits.</li>
+      <li><b>Audit Trail:</b> All configuration updates are recorded in the immutable audit log.</li>
+      <li><b>Outstanding vs Missing:</b> Unreturned devices past cutoff are reported as Outstanding; only an Administrator can confirm a device as Missing after investigation.</li>
+    </ul>
+  </div>
+</div>
+{% endblock %}
+

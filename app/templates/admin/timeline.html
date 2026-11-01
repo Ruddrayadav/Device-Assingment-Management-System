@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">📱 Device History Timeline: <span class="mono">{{ device.serial }}</span></h1>
+    <div class="text-muted">{{ device.make }} {{ device.model }} · Current Status: <b>{{ device.status }}</b> · Condition: <b>{{ device.condition }}</b></div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/admin/devices" class="btn btn-secondary">← Back to All Devices</a>
+    <a href="/admin/missing" class="btn btn-secondary">🔍 Missing Trail</a>
+  </div>
+</div>
+
+<!-- Device Quick Summary Cards -->
+<div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 1.25rem;">
+  <div class="kpi-card">
+    <div class="kpi-label">Current Status</div>
+    <div class="kpi-value" style="font-size: 1.4rem;">
+      <span class="badge 
+        {% if device.status == 'Available' %}badge-available
+        {% elif device.status == 'Issued' %}badge-issued
+        {% elif device.status == 'Missing' %}badge-damaged
+        {% elif device.status == 'Under Repair' %}badge-warning
+        {% else %}badge-secondary{% endif %}">
+        {{ device.status }}
+      </span>
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Currently Assigned To</div>
+    <div class="kpi-value" style="font-size: 1.1rem; font-weight: 600;">
+      {% if assigned_employee %}
+      {{ assigned_employee.name }} ({{ assigned_employee.department }})
+      {% else %}
+      <span class="text-muted">Unassigned / In Inventory</span>
+      {% endif %}
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Total Completed Handovers</div>
+    <div class="kpi-value">{{ total_transactions }}</div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Damage / Service Incidents</div>
+    <div class="kpi-value {{ 'alert' if incident_count > 0 else '' }}">{{ incident_count }}</div>
+  </div>
+</div>
+
+{% if device.unavailable_reason %}
+<div class="flash info" style="margin-bottom: 1.25rem;">
+  ℹ️ <b>Status Reason:</b> {{ device.unavailable_reason }}
+</div>
+{% endif %}
+
+<!-- Chronological Timeline Stream -->
+<div class="card">
+  <div class="card-title">⏱️ Complete Historical Audit & Operational Timeline ({{ events|length }} lifecycle events)</div>
+  
+  <div style="position: relative; padding: 1rem 0; margin-left: 1.5rem; border-left: 2px solid var(--border-light);">
+    {% for ev in events %}
+    <div style="position: relative; margin-bottom: 1.75rem; padding-left: 1.5rem;">
+      <!-- Timeline Node Dot -->
+      <div style="position: absolute; left: -9px; top: 3px; width: 16px; height: 16px; border-radius: 50%; background: var(--accent-blue); border: 3px solid var(--bg-card);"></div>
+      
+      <div style="background: var(--bg-input); padding: 1rem 1.25rem; border-radius: 8px; border: 1px solid var(--border-light);">
+        <div class="flex-between" style="margin-bottom: 0.35rem;">
+          <div style="display: flex; align-items: center; gap: 0.5rem;">
+            <span class="badge {{ ev.badge }}">{{ ev.type }}</span>
+            <b style="font-size: 1rem;">{{ ev.title }}</b>
+          </div>
+          <span class="mono text-muted" style="font-size: 0.8rem;">{{ ev.timestamp_fmt }}</span>
+        </div>
+        
+        <div style="font-size: 0.9rem; color: var(--text-main); margin-bottom: 0.35rem;">
+          {{ ev.description }}
+        </div>
+        
+        <div class="text-muted" style="font-size: 0.775rem;">
+          Recorded by: <b>{{ ev.actor }}</b>
+        </div>
+      </div>
+    </div>
+    {% else %}
+    <div class="text-muted" style="padding-left: 1.5rem;">No historical events recorded for this device.</div>
+    {% endfor %}
+  </div>
+</div>
+{% endblock %}
+

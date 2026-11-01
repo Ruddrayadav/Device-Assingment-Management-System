@@ -31,5 +31,13 @@ echo Press Ctrl+C in this window or run Stop.bat to stop the server.
 echo.
 
 ".venv\Scripts\python.exe" main.py
+if %errorlevel% neq 0 (
+  echo.
+  echo [ERROR] The server stopped unexpectedly (exit code: %errorlevel%).
+  echo Please review any diagnostic messages above.
+  echo For administrator password reset or account recovery, run:
+  echo   .venv\Scripts\python.exe setup_admin.py
+  echo.
+)
 pause
 

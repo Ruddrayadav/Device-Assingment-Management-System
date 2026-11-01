@@ -7,7 +7,8 @@ from fastapi.testclient import TestClient
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 import tests.conftest
 
-from main import app, seed_initial_data_if_needed
+from main import app
+from tests.conftest import seed_initial_data_if_needed
 from app.database import engine, Base, SessionLocal
 from app.models import User, Device, Employee
 from app.auth import sign_session

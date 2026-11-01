@@ -15,6 +15,7 @@ from app.scan_engine import (
 )
 from app.config import DAMAGE_CATEGORIES, now_kolkata, today_kolkata_str
 from app.timefmt import fmt_time, fmt_datetime
+from app.audit import record_audit
 
 router = APIRouter(prefix="/api")
 
@@ -139,6 +140,7 @@ class ScanPayload(BaseModel):
     mode: str = "Issue"
     pending: Optional[Dict[str, Any]] = None
     idempotency_key: Optional[str] = None
+    strict_two_scan: bool = False
 
 @router.post("/scan")
 async def handle_scan(
@@ -153,7 +155,8 @@ async def handle_scan(
         mode=payload.mode,
         pending=payload.pending,
         operator=user,
-        idempotency_key=payload.idempotency_key
+        idempotency_key=payload.idempotency_key,
+        strict_two_scan=payload.strict_two_scan
     )
     proc_time_ms = round((time.perf_counter() - t_start) * 1000, 2)
     result["proc_time_ms"] = proc_time_ms
@@ -161,16 +164,30 @@ async def handle_scan(
     # Audit logging for rejected scans (operator accountability)
     if not result.get("ok"):
         try:
-            audit = AuditLog(
-                timestamp=now_kolkata(),
-                user_id=user.id,
-                username=user.full_name or user.username,
+            record_audit(
+                db=db,
+                user=user,
                 action="SCAN_REJECTED",
                 target_type="SCAN",
                 target_id=str(payload.code)[:64],
-                details=f"[{payload.mode}] {result.get('title')}: {result.get('message')}"
+                details=f"[{payload.mode}] {result.get('title')}: {result.get('message')}",
+                status="FAILED",
+                reason=result.get("title")
             )
-            db.add(audit)
+            db.commit()
+        except Exception:
+            db.rollback()
+    elif result.get("state") == "done":
+        try:
+            record_audit(
+                db=db,
+                user=user,
+                action=f"DEVICE_{result.get('action', 'TRANSACTION').upper()}",
+                target_type="DEVICE",
+                target_id=str(result.get("device", {}).get("serial") or payload.code)[:64],
+                details=f"[{payload.mode}] {result.get('title')}: {result.get('message')}",
+                status="SUCCESS"
+            )
             db.commit()
         except Exception:
             db.rollback()
@@ -218,6 +235,7 @@ async def handle_scan(
 
 class ReturnPayload(BaseModel):
     serial: str
+    employee_id: Optional[str] = None
     condition: str = "Working"
     damage_type: Optional[str] = None
     remarks: Optional[str] = ""
@@ -237,6 +255,7 @@ async def handle_detailed_return(
             condition=payload.condition,
             damage_type=payload.damage_type,
             remarks=payload.remarks or "",
+            verified_employee_id=payload.employee_id,
             idempotency_key=payload.idempotency_key
         )
         return {
@@ -292,6 +311,7 @@ async def handle_damage_report(
         department=emp.department if emp else getattr(dev, "department", "GENERAL"),
         fault_type=payload.fault_type,
         details=payload.details or "Direct damage report",
+        source="Operator Report",
         reported_by_id=user.id,
         reported_by_name=user.full_name or user.username,
         review_status="Open"

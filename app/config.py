@@ -75,10 +75,14 @@ SERVER_PORT = int(os.environ.get("HHD_PORT", "8000"))
 DEVICE_STATUSES = [
     "Available",
     "Issued",
+    "Unavailable",
     "Damaged",
-    "Missing",
-    "Under Repair"
+    "Under Repair",
+    "Sent to Service Centre",
+    "Missing"
 ]
+
+DEFAULT_DAILY_CUTOFF_TIME = "19:00"  # 7:00 PM Kolkata Time
 
 DAMAGE_CATEGORIES = [
     "Blank screen",

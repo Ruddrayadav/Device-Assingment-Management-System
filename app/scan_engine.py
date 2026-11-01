@@ -20,8 +20,10 @@ class ScanException(Exception):
 def sanitize_code(code: str) -> str:
     if not code:
         return ""
-    # Strip non-printable and control characters
-    cleaned = re.sub(r"[\x00-\x1f\x7f]", "", str(code)).strip()
+    # Strip non-printable, control, and zero-width characters
+    cleaned = re.sub(r"[\x00-\x1f\x7f\u200b-\u200d\ufeff]", "", str(code))
+    # Normalize non-breaking spaces and strip outer quotes / whitespace
+    cleaned = cleaned.replace("\u00a0", " ").strip("\"' \t\r\n")
     return cleaned[:64]
 
 def resolve_barcode(db: Session, code: str, prefer_type: Optional[str] = None) -> Tuple[Optional[Device], Optional[Employee]]:
@@ -188,6 +190,10 @@ def issue_device_atomic(
             department=emp.department,
             operator_id=op_id,
             operator_name=op_name,
+            issued_by_operator_name=op_name,
+            returned_by_operator_name=None,
+            issued_at=now,
+            returned_at=None,
             condition="Working",
             cover_qty=dev.cover_qty,
             remarks="Normal Issue",
@@ -229,11 +235,12 @@ def return_device_atomic(
     condition: str = "Working",
     damage_type: Optional[str] = None,
     remarks: str = "",
+    verified_employee_id: Optional[str] = None,
     idempotency_key: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Atomically returns a device from whichever worker currently holds it.
-    Zero need to scan employee ID again. 24/7 continuous operation.
+    Atomically returns a device with verified employee identity and dual-operator tracking.
+    24/7 continuous operation.
     """
     with SCAN_WRITE_LOCK:
         db.expire_all()
@@ -298,6 +305,15 @@ def return_device_atomic(
                 "Device Not Issued"
             )
 
+        # Verify employee match if verified_employee_id is passed
+        if verified_employee_id and dev.assigned_employee_id and verified_employee_id != dev.assigned_employee_id:
+            holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
+            holder_name = holder.name if holder else dev.assigned_employee_id
+            raise ScanException(
+                f"Assignment Mismatch: Device {dev.serial} is assigned to {holder_name} ({dev.assigned_employee_id}), NOT to scanned worker ({verified_employee_id}). Return rejected.",
+                "Assignment Mismatch"
+            )
+
         emp = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
         emp_name = emp.name if emp else "Unknown Worker"
         emp_dept = emp.department if emp else "Warehouse"
@@ -326,9 +342,11 @@ def return_device_atomic(
         if final_condition == "Working":
             dev.status = "Available"
             dev.condition = "Working"
+            dev.unavailable_reason = None
         else:
             dev.status = "Damaged" if final_condition in DAMAGE_CATEGORIES or final_condition == "Damaged" else final_condition
             dev.condition = final_condition
+            dev.unavailable_reason = f"Damaged on return: {final_condition}"
 
         dev.assigned_employee_id = None
         dev.updated_at = now
@@ -344,6 +362,7 @@ def return_device_atomic(
                 department=emp_dept,
                 fault_type=damage_type or final_condition,
                 details=remarks or "Reported during return",
+                source="Operator Report",
                 reported_by_id=op_id,
                 reported_by_name=op_name,
                 review_status="Open"
@@ -361,6 +380,10 @@ def return_device_atomic(
             department=emp_dept,
             operator_id=op_id,
             operator_name=op_name,
+            issued_by_operator_name=asgn.issued_by_operator_name if asgn else "",
+            returned_by_operator_name=op_name,
+            issued_at=asgn.issued_at if asgn else None,
+            returned_at=now,
             condition=final_condition,
             cover_qty=dev.cover_qty,
             remarks=remarks or (f"Returned condition: {final_condition}"),
@@ -396,12 +419,13 @@ def process_scan_pipeline(
     mode: str,
     pending: Optional[Dict[str, str]],
     operator: User,
-    idempotency_key: Optional[str] = None
+    idempotency_key: Optional[str] = None,
+    strict_two_scan: bool = False
 ) -> Dict[str, Any]:
     """
     High-speed, zero-enter unified scan pipeline.
     Resolves code, manages pending state, executes atomic actions without page reload.
-    Supports both Employee-first and Device-first Issue workflows.
+    Supports both Employee-first and Device-first Issue and Return workflows.
     24/7 continuous operation.
     """
     code = sanitize_code(code)
@@ -447,50 +471,205 @@ def process_scan_pipeline(
             "message": f"'{code}' is not recognized as a registered device or employee ID.",
             "code": code,
             "pending": pending,
-            "can_add": operator.role == "admin"
+            "can_add": operator.role in ("admin", "inventory_manager")
         }
 
     # -------------------------------------------------------------
-    # RETURN MODE WORKFLOW: One-scan instant return
+    # RETURN MODE WORKFLOW: Both Employee ID & Device Barcode Required
     # -------------------------------------------------------------
     if mode == "Return":
-        if emp and not dev:
-            return {
-                "ok": False,
-                "state": "error",
-                "title": "Worker Scanned in Return Mode",
-                "message": f"Scanned employee '{emp.name}'. In Return mode, scan ONLY the DEVICE barcode.",
-                "pending": None
-            }
-        # dev is present
-        try:
-            res = return_device_atomic(
-                db=db,
-                device_serial=dev.serial,
-                operator=operator,
-                condition="Working",
-                idempotency_key=idempotency_key
-            )
-            return {
-                "ok": True,
-                "state": "done",
-                "title": f"Device Returned · {dev.serial[-6:]}",
-                "message": res["message"],
-                "action": "Return",
-                "device": res["device"],
-                "employee": res["employee"],
-                "can_flag": True,
-                "idempotent_replay": res.get("idempotent_replay", False),
-                "pending": None
-            }
-        except ScanException as ex:
-            return {
-                "ok": False,
-                "state": "error",
-                "title": ex.title,
-                "message": ex.message,
-                "pending": None
-            }
+        # Case A: Pending state exists (Scan 2 of 2-scan return)
+        if p_type and p_code:
+            # Subcase A1: Employee was scanned first, now Device is scanned
+            if p_type == "employee":
+                if not dev:
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": "Device Expected",
+                        "message": f"Worker {p_code} is pending return. Please scan the assigned DEVICE barcode.",
+                        "pending": pending
+                    }
+                if dev.status != "Issued":
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": "Device Not Issued",
+                        "message": f"Device {dev.serial} is NOT ISSUED (Current status: {dev.status}). Nothing to return.",
+                        "pending": None
+                    }
+                # Assignment mismatch validation
+                if dev.assigned_employee_id != p_code:
+                    holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
+                    holder_name = holder.name if holder else (dev.assigned_employee_id or "Unknown")
+                    scanned_emp = db.query(Employee).filter(Employee.employee_id == p_code).first()
+                    scanned_name = scanned_emp.name if scanned_emp else p_code
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": "Assignment Mismatch",
+                        "message": f"Assignment Mismatch: Device {dev.serial} is assigned to {holder_name} ({dev.assigned_employee_id}), NOT to scanned worker {scanned_name} ({p_code}). Return rejected.",
+                        "pending": None
+                    }
+                try:
+                    res = return_device_atomic(
+                        db=db,
+                        device_serial=dev.serial,
+                        operator=operator,
+                        condition="Working",
+                        verified_employee_id=p_code,
+                        idempotency_key=idempotency_key
+                    )
+                    return {
+                        "ok": True,
+                        "state": "done",
+                        "title": f"Device Returned · {dev.serial[-6:]}",
+                        "message": res["message"],
+                        "action": "Return",
+                        "device": res["device"],
+                        "employee": res["employee"],
+                        "can_flag": True,
+                        "idempotent_replay": res.get("idempotent_replay", False),
+                        "pending": None
+                    }
+                except ScanException as ex:
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": ex.title,
+                        "message": ex.message,
+                        "pending": None
+                    }
+
+            # Subcase A2: Device was scanned first, now Employee is scanned
+            elif p_type == "device":
+                if not emp:
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": "Worker Expected",
+                        "message": f"Device {p_code} is pending return. Please scan the assigned WORKER ID barcode.",
+                        "pending": pending
+                    }
+                target_dev = db.query(Device).filter(Device.serial == p_code).first()
+                if not target_dev or target_dev.status != "Issued":
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": "Device Not Issued",
+                        "message": f"Device {p_code} is NOT ISSUED. Nothing to return.",
+                        "pending": None
+                    }
+                # Assignment mismatch validation
+                if target_dev.assigned_employee_id != emp.employee_id:
+                    holder = db.query(Employee).filter(Employee.employee_id == target_dev.assigned_employee_id).first()
+                    holder_name = holder.name if holder else (target_dev.assigned_employee_id or "Unknown")
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": "Assignment Mismatch",
+                        "message": f"Assignment Mismatch: Device {target_dev.serial} is assigned to {holder_name} ({target_dev.assigned_employee_id}), NOT to scanned worker {emp.name} ({emp.employee_id}). Return rejected.",
+                        "pending": None
+                    }
+                try:
+                    res = return_device_atomic(
+                        db=db,
+                        device_serial=target_dev.serial,
+                        operator=operator,
+                        condition="Working",
+                        verified_employee_id=emp.employee_id,
+                        idempotency_key=idempotency_key
+                    )
+                    return {
+                        "ok": True,
+                        "state": "done",
+                        "title": f"Device Returned · {target_dev.serial[-6:]}",
+                        "message": res["message"],
+                        "action": "Return",
+                        "device": res["device"],
+                        "employee": res["employee"],
+                        "can_flag": True,
+                        "idempotent_replay": res.get("idempotent_replay", False),
+                        "pending": None
+                    }
+                except ScanException as ex:
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": ex.title,
+                        "message": ex.message,
+                        "pending": None
+                    }
+
+        # Case B: No pending state yet (Scan 1 of 2-scan return)
+        if strict_two_scan:
+            if emp:
+                return {
+                    "ok": True,
+                    "state": "pending",
+                    "title": f"Worker Verified · {emp.name}",
+                    "message": f"Worker {emp.name} ({emp.employee_id}) identified. Now scan assigned Device barcode to complete return.",
+                    "action": "PendingReturnDevice",
+                    "pending": {
+                        "type": "employee",
+                        "code": emp.employee_id,
+                        "label": f"{emp.name} ({emp.department})"
+                    }
+                }
+            if dev:
+                if dev.status != "Issued":
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": "Device Not Issued",
+                        "message": f"Device {dev.serial} is NOT ISSUED (Current status: {dev.status}). Nothing to return.",
+                        "pending": None
+                    }
+                holder = db.query(Employee).filter(Employee.employee_id == dev.assigned_employee_id).first()
+                holder_name = holder.name if holder else dev.assigned_employee_id
+                return {
+                    "ok": True,
+                    "state": "pending",
+                    "title": f"Device Ready · {dev.serial[-6:]}",
+                    "message": f"Device {dev.serial} identified (Assigned to {holder_name}). Now scan assigned Worker ID to confirm return.",
+                    "action": "PendingReturnEmployee",
+                    "pending": {
+                        "type": "device",
+                        "code": dev.serial,
+                        "label": f"Device: {dev.serial}"
+                    }
+                }
+        else:
+            # Single-scan return fallback
+            if dev:
+                try:
+                    res = return_device_atomic(
+                        db=db,
+                        device_serial=dev.serial,
+                        operator=operator,
+                        condition="Working",
+                        idempotency_key=idempotency_key
+                    )
+                    return {
+                        "ok": True,
+                        "state": "done",
+                        "title": f"Device Returned · {dev.serial[-6:]}",
+                        "message": res["message"],
+                        "action": "Return",
+                        "device": res["device"],
+                        "employee": res["employee"],
+                        "can_flag": True,
+                        "idempotent_replay": res.get("idempotent_replay", False),
+                        "pending": None
+                    }
+                except ScanException as ex:
+                    return {
+                        "ok": False,
+                        "state": "error",
+                        "title": ex.title,
+                        "message": ex.message,
+                        "pending": None
+                    }
 
     # -------------------------------------------------------------
     # ISSUE MODE WORKFLOW: Automatic Employee-Device Linking

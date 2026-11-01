@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="card" style="max-width: 620px; margin: 4rem auto; text-align: center; padding: 2.5rem; border: 1px solid var(--border); box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4);">
+  <div style="font-size: 3.5rem; margin-bottom: 1rem;">🛡️</div>
+  <h2 style="font-size: 1.75rem; font-weight: 800; margin-bottom: 0.75rem;">Central Server Setup Required</h2>
+  <p class="text-muted" style="line-height: 1.6; font-size: 1rem;">
+    The HHD Server Handover System is awaiting its first-time administrator configuration.<br>
+    For company data security, initial setup must be performed directly on the <strong>central Windows server computer</strong>.
+  </p>
+  <div style="background: rgba(30, 41, 59, 0.7); padding: 1rem; border-radius: 8px; font-family: monospace; font-size: 0.95rem; margin: 1.5rem 0; border: 1px solid var(--border); color: #60a5fa;">
+    Local Setup URL: http://127.0.0.1:8000/setup
+  </div>
+  <p class="text-muted" style="font-size: 0.85rem; margin: 0;">
+    Once the administrator account is created on the central server, warehouse workstation scanning and reporting will be immediately enabled across the network.
+  </p>
+</div>
+{% endblock %}
+

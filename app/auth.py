@@ -65,6 +65,10 @@ class LoginRateLimiter:
         with self._lock:
             self._store.pop(username.lower().strip(), None)
 
+    def clear_all(self):
+        with self._lock:
+            self._store.clear()
+
 login_limiter = LoginRateLimiter(max_attempts=5, lockout_window_sec=300)
 
 
@@ -153,6 +157,49 @@ def decode_session(token: str) -> Optional[Dict[str, Any]]:
     except Exception:
         return None
 
+ROLE_ADMIN = "admin"
+ROLE_INVENTORY_MANAGER = "inventory_manager"
+ROLE_OPERATOR = "operator"
+VALID_ROLES = {ROLE_ADMIN, ROLE_INVENTORY_MANAGER, ROLE_OPERATOR}
+
+def is_local_client(request: Request) -> bool:
+    """
+    Checks if an HTTP request originated from the local Windows host server machine.
+    Permits 127.0.0.1, ::1, localhost, and testclient.
+    Blocks remote LAN computers from accessing unauthenticated setup.
+    """
+    client_host = request.client.host if request.client else "127.0.0.1"
+
+    # Check X-Forwarded-For if client/proxy passes it
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        first_ip = forwarded.split(",")[0].strip()
+        if first_ip not in ("127.0.0.1", "::1", "localhost", "testclient", "0.0.0.0"):
+            return False
+
+    return client_host in ("127.0.0.1", "::1", "localhost", "testclient", "0.0.0.0")
+
+def is_initial_setup_required(db: Session) -> bool:
+    """
+    Returns True ONLY if no administrator account exists in the database.
+    Once an admin is created or setup is marked complete, first-time setup is permanently closed.
+    Setup will NEVER reopen merely because an existing admin cannot log in or is deactivated.
+    """
+    try:
+        from app.models import SystemSetting
+        setting = db.query(SystemSetting).filter(SystemSetting.key == "setup_completed").first()
+        if setting and setting.value == "true":
+            return False
+
+        # If ANY administrator account exists (active or inactive), setup is closed
+        admin_count = db.query(User).filter(User.role == ROLE_ADMIN).count()
+        if admin_count > 0:
+            return False
+    except Exception:
+        return True
+
+    return True
+
 def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -> Optional[User]:
     token = request.cookies.get("hhd_session")
     if not token:
@@ -164,6 +211,26 @@ def get_current_user_optional(request: Request, db: Session = Depends(get_db)) -
     return user
 
 def require_user(request: Request, db: Session = Depends(get_db)) -> User:
+    if is_initial_setup_required(db):
+        if not is_local_client(request):
+            if request.url.path.startswith("/api/"):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Initial administrator setup must be completed on the central host server before warehouse operations can begin."
+                )
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Server setup in progress. Please configure the primary administrator on the central host server computer."
+            )
+        if request.url.path.startswith("/api/"):
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Initial administrator setup required. Please visit /setup."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_307_TEMPORARY_REDIRECT,
+            headers={"Location": "/setup"}
+        )
     user = get_current_user_optional(request, db)
     if not user:
         if request.url.path.startswith("/api/"):
@@ -178,7 +245,7 @@ def require_user(request: Request, db: Session = Depends(get_db)) -> User:
     return user
 
 def require_admin(request: Request, user: User = Depends(require_user)) -> User:
-    if user.role != "admin":
+    if user.role != ROLE_ADMIN:
         if request.url.path.startswith("/api/"):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -187,6 +254,20 @@ def require_admin(request: Request, user: User = Depends(require_user)) -> User:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Administrator access required."
+        )
+    return user
+
+def require_inventory_manager(request: Request, user: User = Depends(require_user)) -> User:
+    """Allows Admin and Inventory Manager roles."""
+    if user.role not in (ROLE_ADMIN, ROLE_INVENTORY_MANAGER):
+        if request.url.path.startswith("/api/"):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Inventory Manager or Administrator access required."
+            )
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Inventory Manager or Administrator access required."
         )
     return user
 

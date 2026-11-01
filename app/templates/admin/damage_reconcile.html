@@ -1,0 +1,141 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <div style="font-size: 0.85rem; margin-bottom: 0.35rem;">
+      <a href="/admin/damage" style="color: var(--primary); text-decoration: none;">← Back to Damage Management</a>
+    </div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">Quarantine Reconciliation Preview</h1>
+    <div class="text-muted">Safe dry-run audit and administrator approval for quarantine ticket synchronization</div>
+  </div>
+</div>
+
+<!-- Audit Summary KPIs -->
+<div class="kpi-grid">
+  <div class="kpi-card">
+    <div class="kpi-label">Damaged Missing Tickets</div>
+    <div class="kpi-value {{ 'alert' if summary.damaged_missing_count > 0 else '' }}" style="color: #f87171;">
+      {{ summary.damaged_missing_count }}
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Under Repair Missing Tickets</div>
+    <div class="kpi-value {{ 'alert' if summary.repair_missing_count > 0 else '' }}" style="color: #fbbf24;">
+      {{ summary.repair_missing_count }}
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Existing Open Tickets Preserved</div>
+    <div class="kpi-value" style="color: #34d399;">
+      {{ summary.existing_open_tickets }}
+    </div>
+  </div>
+  <div class="kpi-card">
+    <div class="kpi-label">Duplicates Prevented</div>
+    <div class="kpi-value" style="color: #60a5fa;">
+      {{ summary.duplicates_avoided }}
+    </div>
+  </div>
+</div>
+
+{% if summary.records_requiring_manual_review %}
+<div class="card" style="padding: 1rem; border-left: 4px solid #f59e0b; margin-bottom: 1.25rem;">
+  <div style="font-weight: 700; color: #fbbf24; margin-bottom: 0.5rem;">⚠️ Items Requiring Administrative Review</div>
+  <ul style="margin: 0; padding-left: 1.25rem; font-size: 0.85rem; color: var(--text-muted); line-height: 1.6;">
+    {% for item in summary.records_requiring_manual_review %}
+    <li><b>{{ item.serial }}:</b> {{ item.issue }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+<!-- Execution Actions Card -->
+<div class="card" style="padding: 1.25rem; margin-bottom: 1.5rem; border: 1px solid {{ 'var(--border)' if summary.new_tickets_to_create == 0 else 'rgba(59, 130, 246, 0.4)' }};">
+  <div class="flex-between">
+    <div>
+      {% if summary.new_tickets_to_create > 0 %}
+      <div style="font-weight: 700; font-size: 1.05rem; color: #60a5fa;">
+        Ready to synchronize {{ summary.new_tickets_to_create }} missing ticket(s)
+      </div>
+      <div class="text-muted" style="font-size: 0.85rem; margin-top: 0.25rem;">
+        An automatic pre-reconciliation safety database backup will be created immediately before changes are committed.
+      </div>
+      {% else %}
+      <div style="font-weight: 700; font-size: 1.05rem; color: #34d399;">
+        ✓ Perfect Quarantine Consistency
+      </div>
+      <div class="text-muted" style="font-size: 0.85rem; margin-top: 0.25rem;">
+        Zero missing tickets detected. All damaged and under-repair devices have active, synchronized tickets.
+      </div>
+      {% endif %}
+    </div>
+
+    <div>
+      {% if summary.new_tickets_to_create > 0 %}
+      <form method="post" action="/admin/damage/reconcile" style="margin: 0;">
+        <button class="btn btn-primary" type="submit" style="padding: 0.65rem 1.25rem; font-weight: 700;">
+          ⚡ Approve & Execute Reconciliation ({{ summary.new_tickets_to_create }})
+        </button>
+      </form>
+      {% else %}
+      <a href="/admin/damage" class="btn btn-secondary">Return to Damage Management</a>
+      {% endif %}
+    </div>
+  </div>
+</div>
+
+<!-- Planned Tickets Table -->
+<div class="card">
+  <div class="card-title">
+    Planned Ticket Synchronization ({{ summary.planned_tickets|length }} Devices)
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Serial Number</th>
+          <th>Make & Model</th>
+          <th>Department</th>
+          <th>Inventory Status</th>
+          <th>Ticket Status To Create</th>
+          <th>Fault Category</th>
+          <th>Source</th>
+          <th>Details</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for t in summary.planned_tickets %}
+        <tr>
+          <td class="mono"><b>{{ t.serial }}</b></td>
+          <td>{{ t.make }} {{ t.model }}</td>
+          <td>{{ t.department }}</td>
+          <td>
+            <span class="badge {{ 'badge-damaged' if t.device_status == 'Damaged' else 'badge-repair' }}">
+              {{ t.device_status }}
+            </span>
+          </td>
+          <td>
+            <span class="badge {{ 'badge-damaged' if t.ticket_status == 'Pending Inspection' else 'badge-repair' }}">
+              {{ t.ticket_status }}
+            </span>
+          </td>
+          <td>{{ t.fault_type }}</td>
+          <td>
+            <span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.3);">
+              {{ t.source }}
+            </span>
+          </td>
+          <td class="text-muted" style="font-size: 0.85rem;">{{ t.notes }}</td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="8" class="text-muted">No pending tickets required. Everything is reconciled.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
+

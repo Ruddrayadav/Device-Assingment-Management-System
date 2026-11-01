@@ -1,5 +1,6 @@
 import csv
 import io
+import os
 import uuid
 import asyncio
 from datetime import datetime
@@ -8,11 +9,13 @@ from pathlib import Path
 from fastapi import APIRouter, Request, Depends, Query, BackgroundTasks, HTTPException, status
 from fastapi.responses import Response, HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.database import get_db, SessionLocal
 from app.models import User, Device, Employee, Transaction, DamageReport
-from app.auth import require_admin
+from app.auth import require_inventory_manager, ROLE_ADMIN, ROLE_INVENTORY_MANAGER
+from app.jobs import job_manager
 from app.reports import generate_excel_report
 from app.timefmt import fmt_datetime
 from app.config import now_kolkata
@@ -22,10 +25,8 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 router = APIRouter()
 
-# In-memory store for async report generation jobs
-REPORT_JOBS: Dict[str, Dict[str, Any]] = {}
-
-def _run_report_job(job_id: str, params: Dict[str, Any]):
+def _excel_export_worker(output_file_path: str, params: Dict[str, Any]):
+    """Thread worker executed inside JobManager semaphore concurrency control."""
     db = SessionLocal()
     try:
         excel_stream = generate_excel_report(
@@ -40,26 +41,22 @@ def _run_report_job(job_id: str, params: Dict[str, Any]):
             condition=params.get("condition"),
             all_history=params.get("all_history", False)
         )
-        REPORT_JOBS[job_id]["status"] = "completed"
-        REPORT_JOBS[job_id]["data"] = excel_stream.getvalue()
-        REPORT_JOBS[job_id]["completed_at"] = now_kolkata()
-    except Exception as ex:
-        REPORT_JOBS[job_id]["status"] = "failed"
-        REPORT_JOBS[job_id]["error"] = str(ex)
+        with open(output_file_path, "wb") as f:
+            f.write(excel_stream.getvalue())
     finally:
         db.close()
 
 @router.get("/admin/reports", response_class=HTMLResponse)
 async def reports_page(
     request: Request,
-    admin: User = Depends(require_admin),
+    user: User = Depends(require_inventory_manager),
     db: Session = Depends(get_db)
 ):
     operators = db.query(User.full_name).filter(User.full_name != "").distinct().all()
-    departments = db.query(Device.department).distinct().all()
+    departments = db.query(Employee.department).filter(Employee.department != "").distinct().all()
     return templates.TemplateResponse(request=request, name="admin/reports.html", context={
         "title": "Reports & Analytics - Admin",
-        "user": admin,
+        "user": user,
         "operators": [o[0] for o in operators if o[0]],
         "departments": [d[0] for d in departments if d[0]]
     })
@@ -75,12 +72,12 @@ async def download_excel_report(
     transaction_type: Optional[str] = Query(None),
     condition: Optional[str] = Query(None),
     all_history: bool = Query(False),
-    admin: User = Depends(require_admin),
+    user: User = Depends(require_inventory_manager),
     db: Session = Depends(get_db)
 ):
     """
     Direct Excel report download executed in a worker thread.
-    Does not block the asyncio event loop and uses read-only batched queries.
+    Does not block the asyncio event loop and uses read-only queries.
     """
     excel_stream = await asyncio.to_thread(
         generate_excel_report,
@@ -104,9 +101,9 @@ async def download_excel_report(
         headers={"Content-Disposition": f'attachment; filename="{filename}"'}
     )
 
+@router.post("/api/reports/async/generate")
 @router.post("/api/reports/jobs")
-async def create_report_job(
-    background_tasks: BackgroundTasks,
+async def create_async_report_job(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     operator: Optional[str] = Query(None),
@@ -116,16 +113,11 @@ async def create_report_job(
     transaction_type: Optional[str] = Query(None),
     condition: Optional[str] = Query(None),
     all_history: bool = Query(False),
-    admin: User = Depends(require_admin)
+    user: User = Depends(require_inventory_manager)
 ):
-    """Starts a non-blocking background report generation job."""
-    job_id = str(uuid.uuid4())
-    REPORT_JOBS[job_id] = {
-        "status": "processing",
-        "created_at": now_kolkata(),
-        "data": None,
-        "error": None
-    }
+    """Starts a non-blocking background report generation job managed by thread pool."""
+    timestamp = now_kolkata().strftime("%Y%m%d_%H%M%S")
+    download_filename = f"HHD_Warehouse_Report_{timestamp}.xlsx"
     params = {
         "start_date": start_date,
         "end_date": end_date,
@@ -137,46 +129,64 @@ async def create_report_job(
         "condition": condition,
         "all_history": all_history
     }
-    background_tasks.add_task(_run_report_job, job_id, params)
-    return {"ok": True, "job_id": job_id, "status": "processing"}
+    job = job_manager.submit_job(
+        user_id=user.id,
+        job_type="EXCEL_REPORT",
+        download_filename=download_filename,
+        worker_func=_excel_export_worker,
+        params=params
+    )
+    return {
+        "ok": True,
+        "job_id": job.job_id,
+        "status": job.status.lower(),
+        "status_url": f"/api/reports/async/status/{job.job_id}",
+        "download_url": f"/api/reports/async/download/{job.job_id}"
+    }
 
+@router.get("/api/reports/async/status/{job_id}")
 @router.get("/api/reports/jobs/{job_id}")
 async def get_report_job_status(
     job_id: str,
-    admin: User = Depends(require_admin)
+    user: User = Depends(require_inventory_manager)
 ):
-    job = REPORT_JOBS.get(job_id)
+    job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Report job not found.")
-    return {
-        "job_id": job_id,
-        "status": job["status"],
-        "error": job.get("error"),
-        "download_url": f"/api/reports/jobs/{job_id}/download" if job["status"] == "completed" else None
-    }
+    info = job.to_dict()
+    info["ok"] = job.status != "FAILED"
+    # Legacy compatibility status key
+    info["status"] = job.status.lower() if job.status != "COMPLETED" else "completed"
+    if job.status == "COMPLETED":
+        info["download_url"] = f"/api/reports/async/download/{job_id}"
+    return info
 
+@router.get("/api/reports/async/download/{job_id}")
 @router.get("/api/reports/jobs/{job_id}/download")
 async def download_report_job_file(
     job_id: str,
-    admin: User = Depends(require_admin)
+    user: User = Depends(require_inventory_manager)
 ):
-    job = REPORT_JOBS.get(job_id)
+    job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Report job not found.")
-    if job["status"] != "completed" or not job["data"]:
+    if job.status != "COMPLETED" or not job.file_path or not os.path.exists(job.file_path):
+        if job.status == "FAILED":
+            raise HTTPException(status_code=500, detail=f"Report generation failed: {job.error_message}")
         raise HTTPException(status_code=400, detail="Report is not ready for download.")
 
-    timestamp = now_kolkata().strftime("%Y%m%d_%H%M")
-    filename = f"HHD_Warehouse_Report_{timestamp}.xlsx"
+    with open(job.file_path, "rb") as f:
+        data = f.read()
+
     return Response(
-        content=job["data"],
+        content=data,
         media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'}
+        headers={"Content-Disposition": f'attachment; filename="{job.download_filename}"'}
     )
 
 @router.get("/reports/csv/devices")
 async def export_devices_csv(
-    admin: User = Depends(require_admin),
+    user: User = Depends(require_inventory_manager),
     db: Session = Depends(get_db)
 ):
     devices = db.query(Device).order_by(Device.serial.asc()).all()
@@ -188,7 +198,7 @@ async def export_devices_csv(
     for d in devices:
         holder_name = emp_map.get(d.assigned_employee_id, "") if d.assigned_employee_id else ""
         writer.writerow([
-            d.serial, d.make, d.model, getattr(d, "department", "GENERAL"),
+            d.serial, d.make, d.model, getattr(d, "department", "") or "",
             d.cover_qty, d.status, d.condition,
             d.assigned_employee_id or "", holder_name,
             d.notes, fmt_datetime(d.updated_at)
@@ -203,7 +213,7 @@ async def export_devices_csv(
 
 @router.get("/reports/csv/employees")
 async def export_employees_csv(
-    admin: User = Depends(require_admin),
+    user: User = Depends(require_inventory_manager),
     db: Session = Depends(get_db)
 ):
     employees = db.query(Employee).order_by(Employee.name.asc()).all()
@@ -228,7 +238,7 @@ async def export_employees_csv(
 
 @router.get("/reports/csv/transactions")
 async def export_transactions_csv(
-    admin: User = Depends(require_admin),
+    user: User = Depends(require_inventory_manager),
     db: Session = Depends(get_db)
 ):
     output = io.StringIO()
@@ -252,20 +262,22 @@ async def export_transactions_csv(
 
 @router.get("/reports/csv/damage")
 async def export_damage_csv(
-    admin: User = Depends(require_admin),
+    user: User = Depends(require_inventory_manager),
     db: Session = Depends(get_db)
 ):
     dmgs = db.query(DamageReport).order_by(DamageReport.id.desc()).all()
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["Report ID", "Report Time", "Date", "Device Serial", "Employee ID", "Employee Name", "Department", "Fault Type", "Details", "Reported By", "Review Status", "Resolution", "Resolved At"])
+    writer.writerow(["Report ID", "Report Time", "Date", "Device Serial", "Employee ID", "Employee Name", "Department", "Fault Type", "Record Source", "Details", "Reported By", "Review Status", "Resolution", "Resolved At"])
 
     for d in dmgs:
         writer.writerow([
             d.id, fmt_datetime(d.report_time),
             getattr(d, "report_date", d.report_time.strftime("%Y-%m-%d")),
             d.serial, d.employee_id or "", d.employee_name or "",
-            d.department or "", d.fault_type, d.details, d.reported_by_name,
+            d.department or "", d.fault_type,
+            getattr(d, "source", "Operator Report"),
+            d.details, d.reported_by_name,
             d.review_status, d.resolution_notes or "",
             fmt_datetime(d.resolved_at) if d.resolved_at else ""
         ])
@@ -276,3 +288,4 @@ async def export_damage_csv(
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": 'attachment; filename="HHD_Damage_Reports.csv"'}
     )
+

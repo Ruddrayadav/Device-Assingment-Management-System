@@ -48,3 +48,54 @@ def db_session() -> Generator[Session, None, None]:
     finally:
         db.close()
 
+def verify_database_state() -> dict:
+    """
+    Verifies database existence and health safely.
+    Detects whether the installation is genuinely fresh, operational, or in an error state.
+    Prevents destructive re-initialization if an existing database is locked or temporarily unavailable.
+    """
+    db_exists = DB_PATH.exists()
+    file_size = DB_PATH.stat().st_size if db_exists else 0
+
+    if db_exists and file_size > 0:
+        try:
+            with sqlite3.connect(f"file:{DB_PATH}?mode=ro", uri=True, timeout=10.0) as conn:
+                res = conn.execute("PRAGMA integrity_check").fetchone()
+                if not res or res[0] != "ok":
+                    return {
+                        "status": "CORRUPT",
+                        "error": f"Database integrity check failed: {res[0] if res else 'Unknown error'}",
+                        "db_path": str(DB_PATH)
+                    }
+                tables = [r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
+                if "users" in tables:
+                    return {
+                        "status": "OPERATIONAL",
+                        "tables": tables,
+                        "db_path": str(DB_PATH)
+                    }
+                else:
+                    return {
+                        "status": "INITIALIZING",
+                        "tables": tables,
+                        "db_path": str(DB_PATH)
+                    }
+        except sqlite3.OperationalError as ex:
+            return {
+                "status": "UNAVAILABLE",
+                "error": f"Existing database file exists at {DB_PATH} but could not be accessed: {ex}",
+                "db_path": str(DB_PATH)
+            }
+        except Exception as ex:
+            return {
+                "status": "UNAVAILABLE",
+                "error": f"Database verification error: {ex}",
+                "db_path": str(DB_PATH)
+            }
+
+    return {
+        "status": "FRESH",
+        "db_path": str(DB_PATH)
+    }
+
+

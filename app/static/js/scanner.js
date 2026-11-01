@@ -1,24 +1,36 @@
 /**
  * Zero-Enter Barcode Scanner Engine
- * Automatically detects barcode bursts from USB HID scanners without requiring Enter or Submit buttons.
+ * Automatically detects barcode bursts from USB HID scanners, wireless/Bluetooth scanners,
+ * clipboard copy-pastes, wedge scanners, and debounced typing without requiring Enter or Submit buttons.
  */
 class BarcodeScannerEngine {
   constructor(options = {}) {
     this.inputElement = options.inputElement || document.getElementById('scan-input');
     this.onScanComplete = options.onScanComplete || (() => {});
-    this.minBarcodeLength = options.minBarcodeLength || 4;
-    this.burstTimeoutMs = options.burstTimeoutMs || 65; // Idle interval after fast typing to trigger scan
-    this.manualDebounceMs = options.manualDebounceMs || 350; // Delay for manual typing
+    this.minBarcodeLength = options.minBarcodeLength !== undefined ? options.minBarcodeLength : 2;
+    this.burstTimeoutMs = options.burstTimeoutMs || 70; // Idle interval after fast typing to trigger scan
+    this.manualDebounceMs = options.manualDebounceMs || 320; // Delay for manual typing
     
     this.lastCharTime = 0;
     this.charIntervals = [];
     this.timer = null;
     this.isProcessing = false;
+    this.previousValueLength = 0;
     this.audioEnabled = localStorage.getItem('hhd_sound_enabled') !== '0';
     this.audioCtx = null;
 
     this.initAudio();
     this.bindEvents();
+  }
+
+  cleanCode(raw) {
+    if (!raw) return '';
+    return String(raw)
+      .replace(/[\u200B-\u200D\uFEFF]/g, '')  // zero-width spaces
+      .replace(/[\u00A0\s]+/g, ' ')           // non-breaking and multiple spaces to single
+      .replace(/[\r\n\t]+/g, '')              // carriage returns, newlines, tabs
+      .replace(/^["']|["']$/g, '')            // accidental outer quotes from copy-paste
+      .trim();
   }
 
   initAudio() {
@@ -109,9 +121,9 @@ class BarcodeScannerEngine {
       }, 50);
     });
 
-    // Detect barcode input bursts
+    // Detect Enter, Tab, Escape, CRLF
     this.inputElement.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter' || e.key === 'Tab') {
+      if (e.key === 'Enter' || e.key === 'Tab' || e.key === '\r' || e.key === '\n') {
         e.preventDefault();
         this.triggerScanImmediate();
       } else if (e.key === 'Escape') {
@@ -123,34 +135,91 @@ class BarcodeScannerEngine {
       }
     });
 
-    this.inputElement.addEventListener('input', (e) => {
-      const now = performance.now();
-      const interval = this.lastCharTime ? now - this.lastCharTime : 100;
-      this.lastCharTime = now;
-      this.charIntervals.push(interval);
-      if (this.charIntervals.length > 20) this.charIntervals.shift();
-
+    // Instant Copy-Paste detection (Cmd+V, Ctrl+V, Right-Click -> Paste, Middle-click)
+    this.inputElement.addEventListener('paste', (e) => {
       clearTimeout(this.timer);
+      
+      const pastedText = (e.clipboardData || window.clipboardData)?.getData('text');
+      if (pastedText) {
+        e.preventDefault();
+        const clean = this.cleanCode(pastedText);
+        if (clean.length >= this.minBarcodeLength) {
+          this.inputElement.value = clean;
+          this.triggerScanImmediate();
+          return;
+        }
+      }
 
-      const val = this.inputElement.value.trim();
-      if (val.length < this.minBarcodeLength) {
+      // Fallback if clipboardData was restricted by browser policy
+      setTimeout(() => {
+        if (!this.inputElement) return;
+        const clean = this.cleanCode(this.inputElement.value);
+        if (clean.length >= this.minBarcodeLength) {
+          this.inputElement.value = clean;
+          this.triggerScanImmediate();
+        }
+      }, 10);
+    });
+
+    // Input event: zero-enter detection for hardware bursts, chunk input, and debounced typing
+    this.inputElement.addEventListener('input', (e) => {
+      clearTimeout(this.timer);
+      if (!this.inputElement) return;
+
+      let rawVal = this.inputElement.value;
+
+      // If scanner appended or embedded carriage return / newline, trigger immediately
+      if (/[\r\n]/.test(rawVal)) {
+        this.inputElement.value = this.cleanCode(rawVal);
+        this.triggerScanImmediate();
         return;
       }
 
-      // Check average interval of recent characters (USB HID scanners type with sub-45ms intervals)
-      const recentIntervals = this.charIntervals.slice(-4);
-      const avgInterval = recentIntervals.reduce((a, b) => a + b, 0) / recentIntervals.length;
-      const isScannerBurst = avgInterval < 45;
-
-      if (isScannerBurst) {
-        // Automatic completion for hardware scanner bursts without requiring Enter/Tab suffix
-        this.timer = setTimeout(() => {
-          this.triggerScanImmediate();
-        }, this.burstTimeoutMs);
-      } else {
-        // Manual keyboard typing: do NOT prematurely auto-submit on a timer that splits long serials.
-        // Manual entry is submitted when the operator presses Enter or Tab.
+      const val = this.cleanCode(rawVal);
+      if (val.length < this.minBarcodeLength) {
+        this.previousValueLength = val.length;
+        return;
       }
+
+      const now = performance.now();
+      const currentLength = val.length;
+      const charsAdded = currentLength - this.previousValueLength;
+      this.previousValueLength = currentLength;
+
+      // Immediate trigger for paste, drop, or multi-character wedge injection
+      if (e.inputType === 'insertFromPaste' || e.inputType === 'insertFromDrop' || charsAdded > 1) {
+        this.inputElement.value = val;
+        this.triggerScanImmediate();
+        return;
+      }
+
+      // Track interval between keystrokes (ignoring idle pause between separate scans)
+      if (this.lastCharTime) {
+        const delta = now - this.lastCharTime;
+        if (delta < 800) {
+          this.charIntervals.push(delta);
+          if (this.charIntervals.length > 15) this.charIntervals.shift();
+        } else {
+          // New scan burst started after idle pause: reset interval history
+          this.charIntervals = [];
+        }
+      }
+      this.lastCharTime = now;
+
+      // Hardware barcode scanners (USB/Bluetooth) typically type < 75ms per character
+      let isScannerBurst = false;
+      if (this.charIntervals.length >= 1) {
+        const recent = this.charIntervals.slice(-4);
+        const avgInterval = recent.reduce((a, b) => a + b, 0) / recent.length;
+        isScannerBurst = avgInterval < 75;
+      }
+
+      // Fast burst: burstTimeoutMs (70ms) - immediate response once scanner finishes transmission
+      // Slower scan / manual typing: manualDebounceMs (320ms) - auto-triggers without pressing Enter
+      const delay = isScannerBurst ? this.burstTimeoutMs : this.manualDebounceMs;
+      this.timer = setTimeout(() => {
+        this.triggerScanImmediate();
+      }, delay);
     });
   }
 
@@ -162,12 +231,15 @@ class BarcodeScannerEngine {
 
   triggerScanImmediate() {
     clearTimeout(this.timer);
-    const code = this.inputElement.value.trim();
+    if (!this.inputElement) return;
+
+    const code = this.cleanCode(this.inputElement.value);
     if (!code || this.isProcessing) return;
 
     this.inputElement.value = '';
     this.charIntervals = [];
     this.lastCharTime = 0;
+    this.previousValueLength = 0;
 
     this.isProcessing = true;
     try {
@@ -185,8 +257,8 @@ class BarcodeScannerEngine {
     }
     this.charIntervals = [];
     this.lastCharTime = 0;
+    this.previousValueLength = 0;
   }
 }
 
 window.BarcodeScannerEngine = BarcodeScannerEngine;
-

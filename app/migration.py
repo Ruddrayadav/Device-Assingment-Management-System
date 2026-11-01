@@ -10,7 +10,7 @@ def run_schema_migration(target_path: Path = None):
     1. Verifies database path.
     2. Creates a consistent safety backup via SQLite backup API.
     3. Verifies backup integrity.
-    4. Runs idempotent schema migrations (columns, indexes, shift removal).
+    4. Runs idempotent schema migrations (columns, indexes, shift removal, roles, service records, missing events).
     5. Verifies database integrity via PRAGMA integrity_check.
     6. If migration fails, rolls back safely.
     """
@@ -58,25 +58,45 @@ def run_schema_migration(target_path: Path = None):
             except Exception:
                 return set()
 
-
         # 1. Devices table migrations
         dev_cols = get_columns("devices")
         if dev_cols:
             if "department" not in dev_cols:
-                cur.execute("ALTER TABLE devices ADD COLUMN department VARCHAR(100) NOT NULL DEFAULT 'GENERAL';")
-                cur.execute("UPDATE devices SET department = 'GENERAL' WHERE department IS NULL OR department = '';")
+                cur.execute("ALTER TABLE devices ADD COLUMN department VARCHAR(100);")
             if "inventory_date" not in dev_cols:
                 cur.execute("ALTER TABLE devices ADD COLUMN inventory_date VARCHAR(50);")
+            if "unavailable_reason" not in dev_cols:
+                cur.execute("ALTER TABLE devices ADD COLUMN unavailable_reason VARCHAR(255);")
+            if "service_centre_name" not in dev_cols:
+                cur.execute("ALTER TABLE devices ADD COLUMN service_centre_name VARCHAR(120);")
+            if "service_reference" not in dev_cols:
+                cur.execute("ALTER TABLE devices ADD COLUMN service_reference VARCHAR(100);")
+            if "service_sent_date" not in dev_cols:
+                cur.execute("ALTER TABLE devices ADD COLUMN service_sent_date VARCHAR(20);")
+            if "service_expected_return" not in dev_cols:
+                cur.execute("ALTER TABLE devices ADD COLUMN service_expected_return VARCHAR(20);")
 
         # 2. Transactions table migrations
         tx_cols = get_columns("transactions")
         if tx_cols:
             if "transaction_date" not in tx_cols:
                 cur.execute("ALTER TABLE transactions ADD COLUMN transaction_date VARCHAR(10);")
-                # Backfill from operational_date or transaction_time
                 if "operational_date" in tx_cols:
                     cur.execute("UPDATE transactions SET transaction_date = operational_date WHERE transaction_date IS NULL;")
                 cur.execute("UPDATE transactions SET transaction_date = substr(transaction_time, 1, 10) WHERE transaction_date IS NULL OR transaction_date = '';")
+            if "issued_by_operator_name" not in tx_cols:
+                cur.execute("ALTER TABLE transactions ADD COLUMN issued_by_operator_name VARCHAR(100);")
+                # Backfill for Issue transactions
+                cur.execute("UPDATE transactions SET issued_by_operator_name = operator_name WHERE transaction_type = 'Issue' AND issued_by_operator_name IS NULL;")
+            if "returned_by_operator_name" not in tx_cols:
+                cur.execute("ALTER TABLE transactions ADD COLUMN returned_by_operator_name VARCHAR(100);")
+                cur.execute("UPDATE transactions SET returned_by_operator_name = operator_name WHERE transaction_type = 'Return' AND returned_by_operator_name IS NULL;")
+            if "issued_at" not in tx_cols:
+                cur.execute("ALTER TABLE transactions ADD COLUMN issued_at DATETIME;")
+                cur.execute("UPDATE transactions SET issued_at = transaction_time WHERE transaction_type = 'Issue' AND issued_at IS NULL;")
+            if "returned_at" not in tx_cols:
+                cur.execute("ALTER TABLE transactions ADD COLUMN returned_at DATETIME;")
+                cur.execute("UPDATE transactions SET returned_at = transaction_time WHERE transaction_type = 'Return' AND returned_at IS NULL;")
 
         # 3. Device assignments table migrations
         asgn_cols = get_columns("device_assignments")
@@ -102,7 +122,97 @@ def run_schema_migration(target_path: Path = None):
                     cur.execute("UPDATE damage_reports SET report_date = operational_date WHERE report_date IS NULL;")
                 cur.execute("UPDATE damage_reports SET report_date = substr(report_time, 1, 10) WHERE report_date IS NULL OR report_date = '';")
 
-        # 5. Clean up obsolete shift indexes and shift_logs table
+            if "source" not in dmg_cols:
+                cur.execute("ALTER TABLE damage_reports ADD COLUMN source VARCHAR(50) NOT NULL DEFAULT 'Operator Report';")
+                cur.execute("UPDATE damage_reports SET source = 'Excel Master Import' WHERE reported_by_name LIKE '%Excel%' OR reported_by_name LIKE '%Import%';")
+                cur.execute("UPDATE damage_reports SET source = 'System Reconciliation' WHERE reported_by_name LIKE '%Reconciliation%' OR reported_by_name LIKE '%System%';")
+                cur.execute("CREATE INDEX IF NOT EXISTS ix_damage_reports_source ON damage_reports (source);")
+
+        # 5. Audit logs table migrations
+        audit_cols = get_columns("audit_logs")
+        if audit_cols:
+            if "role" not in audit_cols:
+                cur.execute("ALTER TABLE audit_logs ADD COLUMN role VARCHAR(30) NOT NULL DEFAULT 'operator';")
+            if "previous_value" not in audit_cols:
+                cur.execute("ALTER TABLE audit_logs ADD COLUMN previous_value TEXT;")
+            if "new_value" not in audit_cols:
+                cur.execute("ALTER TABLE audit_logs ADD COLUMN new_value TEXT;")
+            if "status" not in audit_cols:
+                cur.execute("ALTER TABLE audit_logs ADD COLUMN status VARCHAR(20) NOT NULL DEFAULT 'SUCCESS';")
+            if "reason" not in audit_cols:
+                cur.execute("ALTER TABLE audit_logs ADD COLUMN reason VARCHAR(255);")
+
+        # 6. Create Missing Events table if not exists
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS missing_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            serial VARCHAR(64) NOT NULL,
+            employee_id VARCHAR(64),
+            employee_name VARCHAR(120) NOT NULL DEFAULT '',
+            department VARCHAR(100) NOT NULL DEFAULT '',
+            issued_at DATETIME,
+            issued_by_operator_name VARCHAR(100) NOT NULL DEFAULT '',
+            confirmed_at DATETIME NOT NULL,
+            confirmed_by_id INTEGER,
+            confirmed_by_name VARCHAR(100) NOT NULL DEFAULT '',
+            reason TEXT NOT NULL DEFAULT '',
+            notes TEXT NOT NULL DEFAULT '',
+            status VARCHAR(30) NOT NULL DEFAULT 'CONFIRMED_MISSING',
+            recovered_at DATETIME,
+            recovered_by_id INTEGER,
+            recovered_by_name VARCHAR(100),
+            found_by VARCHAR(120),
+            recovery_condition VARCHAR(50),
+            recovery_notes TEXT,
+            post_recovery_status VARCHAR(50),
+            FOREIGN KEY (serial) REFERENCES devices(serial),
+            FOREIGN KEY (employee_id) REFERENCES employees(employee_id),
+            FOREIGN KEY (confirmed_by_id) REFERENCES users(id),
+            FOREIGN KEY (recovered_by_id) REFERENCES users(id)
+        );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_missing_serial_status ON missing_events (serial, status);")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_missing_events_confirmed_at ON missing_events (confirmed_at);")
+
+        # 7. Create Service Records table if not exists
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS service_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            serial VARCHAR(64) NOT NULL,
+            service_centre_name VARCHAR(120) NOT NULL,
+            sent_date VARCHAR(20) NOT NULL,
+            external_reference VARCHAR(100),
+            expected_return_date VARCHAR(20),
+            actual_return_date VARCHAR(20),
+            sent_by_id INTEGER,
+            sent_by_name VARCHAR(100) NOT NULL DEFAULT '',
+            service_result TEXT,
+            inspection_notes TEXT,
+            inspected_by_id INTEGER,
+            inspected_by_name VARCHAR(100),
+            status VARCHAR(30) NOT NULL DEFAULT 'SENT',
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (serial) REFERENCES devices(serial),
+            FOREIGN KEY (sent_by_id) REFERENCES users(id),
+            FOREIGN KEY (inspected_by_id) REFERENCES users(id)
+        );
+        """)
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_service_serial_status ON service_records (serial, status);")
+
+        # 8. Create System Settings table if not exists
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS system_settings (
+            key VARCHAR(64) PRIMARY KEY,
+            value TEXT NOT NULL,
+            description VARCHAR(255),
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+        """)
+        # Seed default daily cutoff time (7:00 PM / 19:00) if not present
+        cur.execute("INSERT OR IGNORE INTO system_settings (key, value, description) VALUES ('daily_cutoff_time', '19:00', 'Daily Reporting Cutoff Time (HH:MM in 24h format)');")
+
+        # 9. Clean up obsolete shift indexes and shift_logs table
         obsolete_indexes = [
             "ix_transactions_shift_name", "ix_transactions_operational_date", "idx_tx_opdate_shift",
             "ix_device_assignments_issued_operational_date", "ix_device_assignments_returned_operational_date",
@@ -120,7 +230,7 @@ def run_schema_migration(target_path: Path = None):
         except Exception:
             pass
 
-        # 6. Drop obsolete shift columns if present (SQLite 3.35+)
+        # 10. Drop obsolete shift columns if present (SQLite 3.35+)
         cols_to_drop = {
             "device_assignments": ["issued_shift", "issued_operational_date", "returned_shift", "returned_operational_date"],
             "transactions": ["shift_name", "operational_date"],
@@ -136,14 +246,7 @@ def run_schema_migration(target_path: Path = None):
                     except Exception:
                         pass
 
-        # 7. Update legacy operator full names if they reflect old shift names
-        try:
-            cur.execute("UPDATE users SET full_name = 'Rahul (Operator 1)' WHERE username = 'operator1' AND (full_name LIKE '%Morning%' OR full_name = 'Operator 1');")
-            cur.execute("UPDATE users SET full_name = 'Amit (Operator 2)' WHERE username = 'operator2' AND (full_name LIKE '%Evening%' OR full_name = 'Operator 2');")
-        except Exception:
-            pass
-
-        # 8. Post-migration integrity check
+        # 11. Post-migration integrity check
         cur.execute("PRAGMA integrity_check;")
         chk_res = cur.fetchone()
         if not chk_res or chk_res[0] != "ok":

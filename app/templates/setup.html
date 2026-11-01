@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+
+{% block head %}
+<style>
+  .setup-wrapper {
+    max-width: 540px;
+    margin: 2.5rem auto;
+  }
+  .setup-card {
+    background-color: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 2.5rem;
+    box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.4);
+  }
+  .setup-header {
+    text-align: center;
+    margin-bottom: 1.75rem;
+  }
+  .setup-title {
+    font-size: 1.75rem;
+    font-weight: 800;
+    letter-spacing: -0.025em;
+  }
+  .setup-subtitle {
+    font-size: 1rem;
+    color: var(--text-muted);
+    margin-top: 0.5rem;
+    line-height: 1.5;
+  }
+  .setup-badge {
+    display: inline-block;
+    padding: 0.25rem 0.75rem;
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    border-radius: 9999px;
+    background: rgba(59, 130, 246, 0.15);
+    color: #60a5fa;
+    border: 1px solid rgba(59, 130, 246, 0.3);
+    margin-bottom: 0.75rem;
+  }
+  .setup-info-box {
+    background: rgba(30, 41, 59, 0.7);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1rem;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin-bottom: 1.5rem;
+  }
+  .meter-bar {
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border);
+    margin-top: 0.35rem;
+    transition: all 0.3s ease;
+  }
+  .meter-bar.weak { background: #ef4444; width: 33%; }
+  .meter-bar.medium { background: #f59e0b; width: 66%; }
+  .meter-bar.strong { background: #10b981; width: 100%; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="setup-wrapper">
+  <div class="setup-card">
+    <div class="setup-header">
+      <div class="setup-badge">🛡️ First-Time System Setup</div>
+      <h1 class="setup-title">Welcome to HHD Server Handover System</h1>
+      <p class="setup-subtitle">
+        Create your company's first Administrator account to get started.
+      </p>
+    </div>
+
+    <div class="setup-info-box">
+      <strong>Central Server Security Notice:</strong> This initial setup wizard is running locally on your central Windows computer.
+      Once your primary Administrator account is created, this setup endpoint will be <strong>permanently disabled</strong>
+      and warehouse stations will become active.
+    </div>
+
+    {% if error %}
+    <div class="flash error" style="margin-bottom: 1.25rem;">
+      ✗ {{ error }}
+    </div>
+    {% endif %}
+
+    <form method="post" action="/setup" id="setup-form">
+      <div class="form-group" style="margin-bottom: 1.15rem;">
+        <label for="full_name">Administrator Full Name *</label>
+        <input id="full_name" name="full_name" value="{{ full_name or '' }}" required autofocus autocomplete="name"
+               placeholder="e.g. Lead Warehouse Administrator">
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.15rem;">
+        <label for="username">Username *</label>
+        <input id="username" name="username" value="{{ username or '' }}" required autocomplete="username"
+               placeholder="e.g. warehouse_admin" minlength="3" maxlength="64">
+        <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+          3 to 64 characters (letters, numbers, underscores, hyphens, periods)
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.15rem;">
+        <label for="password">Password *</label>
+        <input id="password" name="password" type="password" required minlength="8" autocomplete="new-password"
+               placeholder="Minimum 8 characters">
+        <div class="meter-bar" id="strength-bar"></div>
+        <div id="strength-text" style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.25rem;">
+          Minimum 8 characters. Must not equal username or common passwords.
+        </div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label for="confirm_password">Confirm Password *</label>
+        <input id="confirm_password" name="confirm_password" type="password" required minlength="8" autocomplete="new-password"
+               placeholder="Re-enter password to confirm">
+        <div id="match-text" style="font-size: 0.8rem; margin-top: 0.25rem;"></div>
+      </div>
+
+      <button class="btn btn-primary" type="submit" id="submit-btn" style="width: 100%; padding: 0.85rem; font-size: 1rem; font-weight: 700;">
+        Create Administrator Account & Secure System
+      </button>
+    </form>
+  </div>
+</div>
+
+<script>
+  const pwdInput = document.getElementById('password');
+  const confirmInput = document.getElementById('confirm_password');
+  const bar = document.getElementById('strength-bar');
+  const strengthText = document.getElementById('strength-text');
+  const matchText = document.getElementById('match-text');
+  const form = document.getElementById('setup-form');
+
+  function checkStrength() {
+    const val = pwdInput.value;
+    if (!val) {
+      bar.className = 'meter-bar';
+      strengthText.textContent = 'Minimum 8 characters. Choose a strong, unique password.';
+      strengthText.style.color = 'var(--text-muted)';
+      return;
+    }
+    let score = 0;
+    if (val.length >= 8) score++;
+    if (val.length >= 12) score++;
+    if (/[A-Z]/.test(val) && /[a-z]/.test(val)) score++;
+    if (/[0-9]/.test(val)) score++;
+    if (/[^A-Za-z0-9]/.test(val)) score++;
+
+    if (score < 2 || val.length < 8) {
+      bar.className = 'meter-bar weak';
+      strengthText.textContent = 'Password strength: Weak (min 8 chars required)';
+      strengthText.style.color = '#ef4444';
+    } else if (score < 4) {
+      bar.className = 'meter-bar medium';
+      strengthText.textContent = 'Password strength: Medium (Good)';
+      strengthText.style.color = '#f59e0b';
+    } else {
+      bar.className = 'meter-bar strong';
+      strengthText.textContent = 'Password strength: Strong ✓';
+      strengthText.style.color = '#10b981';
+    }
+    checkMatch();
+  }
+
+  function checkMatch() {
+    if (!confirmInput.value) {
+      matchText.textContent = '';
+      return;
+    }
+    if (pwdInput.value === confirmInput.value) {
+      matchText.textContent = '✓ Passwords match';
+      matchText.style.color = '#10b981';
+    } else {
+      matchText.textContent = '✗ Passwords do not match';
+      matchText.style.color = '#ef4444';
+    }
+  }
+
+  pwdInput.addEventListener('input', checkStrength);
+  confirmInput.addEventListener('input', checkMatch);
+
+  form.addEventListener('submit', (e) => {
+    if (pwdInput.value !== confirmInput.value) {
+      e.preventDefault();
+      alert('Passwords do not match. Please verify your password confirmation.');
+      confirmInput.focus();
+    }
+  });
+</script>
+{% endblock %}

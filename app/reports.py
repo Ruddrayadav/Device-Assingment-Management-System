@@ -146,7 +146,7 @@ def generate_excel_report(
 
     ws1.append(["Key Operational Metric", "Value"])
     metrics = [
-        ("Total Device Fleet", total_devs),
+        ("Total Devices", total_devs),
         ("Available in Warehouse", avail_devs),
         ("Currently Issued to Employees", issued_devs),
         ("Damaged Devices", damaged_devs),
@@ -303,7 +303,7 @@ def generate_excel_report(
     ws5.append([
         "ID", "Report Time", "Date", "Device Serial",
         "Employee ID", "Employee Name", "Department",
-        "Fault Type", "Details", "Reported By", "Review Status",
+        "Fault Type", "Record Source", "Details", "Reported By", "Review Status",
         "Resolution Notes", "Resolved By", "Resolved At"
     ])
     style_header_row(ws5, 1, fill=NAVY_HEADER_FILL)
@@ -320,6 +320,7 @@ def generate_excel_report(
             d.employee_name or "",
             d.department or "",
             d.fault_type,
+            getattr(d, "source", "Operator Report"),
             d.details,
             d.reported_by_name,
             d.review_status,

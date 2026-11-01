@@ -1,0 +1,226 @@
+{% extends "base.html" %}
+
+{% block content %}
+<div class="flex-between" style="margin-bottom: 1.25rem;">
+  <div>
+    <h1 style="font-size: 1.75rem; font-weight: 800;">🔍 Missing Device Trail</h1>
+    <div class="text-muted">Complete historical lifecycle trail for all devices — Never Missing, Outstanding, Confirmed, and Recovered</div>
+  </div>
+  <div style="display: flex; gap: 0.5rem;">
+    <a href="/admin/missing/export?view={{ current_view }}&q={{ q }}&dept={{ dept_filter }}" class="btn btn-secondary">📥 Export to Excel</a>
+    <a href="/admin/outstanding" class="btn btn-secondary">⏳ Outstanding Devices</a>
+  </div>
+</div>
+
+<!-- Category KPI Tabs -->
+<div class="kpi-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-bottom: 1.25rem;">
+  <a href="/admin/missing?view=all" style="text-decoration: none; color: inherit;">
+    <div class="kpi-card {{ 'alert' if current_view == 'all' else '' }}">
+      <div class="kpi-label">All Devices</div>
+      <div class="kpi-value">{{ counts.total }}</div>
+    </div>
+  </a>
+  <a href="/admin/missing?view=never_missing" style="text-decoration: none; color: inherit;">
+    <div class="kpi-card {{ 'alert' if current_view == 'never_missing' else '' }}">
+      <div class="kpi-label">Never Missing</div>
+      <div class="kpi-value" style="color: var(--accent-green);">{{ counts.never_missing }}</div>
+    </div>
+  </a>
+  <a href="/admin/missing?view=outstanding" style="text-decoration: none; color: inherit;">
+    <div class="kpi-card {{ 'alert' if current_view == 'outstanding' else '' }}">
+      <div class="kpi-label">Currently Outstanding</div>
+      <div class="kpi-value" style="color: #60a5fa;">{{ counts.outstanding }}</div>
+    </div>
+  </a>
+  <a href="/admin/missing?view=confirmed_missing" style="text-decoration: none; color: inherit;">
+    <div class="kpi-card {{ 'alert' if current_view == 'confirmed_missing' else '' }}">
+      <div class="kpi-label">Confirmed Missing</div>
+      <div class="kpi-value" style="color: var(--accent-red);">{{ counts.confirmed_missing }}</div>
+    </div>
+  </a>
+  <a href="/admin/missing?view=recovered" style="text-decoration: none; color: inherit;">
+    <div class="kpi-card {{ 'alert' if current_view == 'recovered' else '' }}">
+      <div class="kpi-label">Recovered</div>
+      <div class="kpi-value" style="color: #34d399;">{{ counts.recovered }}</div>
+    </div>
+  </a>
+  <a href="/admin/missing?view=missing_multiple" style="text-decoration: none; color: inherit;">
+    <div class="kpi-card {{ 'alert' if current_view == 'missing_multiple' else '' }}">
+      <div class="kpi-label">Missing > 1 Time</div>
+      <div class="kpi-value" style="color: #f59e0b;">{{ counts.missing_multiple }}</div>
+    </div>
+  </a>
+</div>
+
+<!-- Filters -->
+<div class="card" style="margin-bottom: 1.25rem;">
+  <form method="get" action="/admin/missing" style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: flex-end;">
+    <input type="hidden" name="view" value="{{ current_view }}">
+    <div class="form-group" style="flex: 1; min-width: 220px; margin-bottom: 0;">
+      <label for="q">Search Device Serial, Worker ID or Name</label>
+      <input id="q" name="q" value="{{ q }}" placeholder="e.g. 127, HONEY_999, Ajay">
+    </div>
+    <div class="form-group" style="min-width: 180px; margin-bottom: 0;">
+      <label for="dept">Worker Department</label>
+      <select id="dept" name="dept">
+        <option value="">All Departments</option>
+        {% for d in departments %}
+        <option value="{{ d }}" {{ 'selected' if dept_filter == d else '' }}>{{ d }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <button class="btn btn-primary" type="submit">Filter Trail</button>
+    <a href="/admin/missing?view={{ current_view }}" class="btn btn-secondary">Reset</a>
+  </form>
+</div>
+
+<!-- Missing Trail Table -->
+<div class="card">
+  <div class="card-title flex-between">
+    <span>📋 Device Missing Lifecycle Records ({{ records|length }} devices displayed)</span>
+    <span class="text-muted" style="font-size: 0.85rem; font-weight: normal;">Viewing: <b>{{ current_view_label }}</b></span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr>
+          <th>Device Serial</th>
+          <th>Model</th>
+          <th>Current Status</th>
+          <th>Missing Category</th>
+          <th>Times Missing</th>
+          <th>Last Confirmed Missing</th>
+          <th>Confirmed By (Admin)</th>
+          <th>Last Recovery Date</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in records %}
+        <tr>
+          <td class="mono"><b>{{ r.serial }}</b></td>
+          <td>{{ r.make }} {{ r.model }}</td>
+          <td>
+            <span class="badge 
+              {% if r.status == 'Available' %}badge-available
+              {% elif r.status == 'Issued' %}badge-issued
+              {% elif r.status == 'Missing' %}badge-damaged
+              {% elif r.status == 'Under Repair' %}badge-warning
+              {% else %}badge-secondary{% endif %}">
+              {{ r.status }}
+            </span>
+          </td>
+          <td>
+            <span class="badge 
+              {% if r.category == 'Never Missing' %}badge-available
+              {% elif r.category == 'Currently Outstanding' %}badge-issued
+              {% elif r.category == 'Confirmed Missing' %}badge-damaged
+              {% elif r.category == 'Recovered' %}badge-available
+              {% else %}badge-warning{% endif %}">
+              {{ r.category }}
+            </span>
+          </td>
+          <td class="mono" style="text-align: center;">{{ r.missing_count }}</td>
+          <td class="mono" style="font-size: 0.85rem;">{{ r.last_missing_date or '—' }}</td>
+          <td>{{ r.confirmed_by_admin or '—' }}</td>
+          <td class="mono" style="font-size: 0.85rem;">{{ r.last_recovery_date or '—' }}</td>
+          <td style="white-space: nowrap;">
+            <a href="/admin/device/timeline/{{ r.serial }}" class="btn btn-sm btn-secondary">📜 Timeline</a>
+            {% if r.status == 'Missing' %}
+            <button class="btn btn-sm btn-primary" onclick="openRecoverModal('{{ r.serial }}')" type="button">✓ Record Recovery</button>
+            {% elif r.status == 'Issued' and user.role == 'admin' %}
+            <button class="btn btn-sm btn-danger" onclick="openConfirmMissingModal('{{ r.serial }}')" type="button">⚠️ Confirm Missing</button>
+            {% endif %}
+          </td>
+        </tr>
+        {% else %}
+        <tr>
+          <td colspan="9" class="text-muted" style="text-align: center; padding: 2rem;">No devices match the selected missing trail filter.</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- Modal: Confirm Missing (Admin Only) -->
+<dialog id="modal-confirm-missing" style="max-width: 520px; border-radius: 10px; border: 1px solid var(--border-light); background: var(--bg-card); color: var(--text-main); padding: 1.5rem;">
+  <form method="post" action="/admin/missing/confirm">
+    <h3 style="margin-bottom: 0.75rem; color: var(--accent-red);">⚠️ Confirm Device as Officially Missing</h3>
+    <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1rem;">
+      Only authorized Administrators can confirm a device as missing after investigation.
+    </p>
+    <div class="form-group">
+      <label for="missing-serial">Device Serial Number</label>
+      <input id="missing-serial" name="serial" class="mono" readonly style="background: var(--bg-input);">
+    </div>
+    <div class="form-group">
+      <label for="missing-reason">Investigation Reason *</label>
+      <input id="missing-reason" name="reason" placeholder="e.g. Unreturned past daily cutoff, employee cannot locate device" required>
+    </div>
+    <div class="form-group">
+      <label for="missing-notes">Investigation Notes</label>
+      <textarea id="missing-notes" name="notes" rows="2" placeholder="Details of supervisor check, locker search, etc."></textarea>
+    </div>
+    <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+      <button class="btn btn-secondary" type="button" onclick="document.getElementById('modal-confirm-missing').close()">Cancel</button>
+      <button class="btn btn-danger" type="submit">Confirm Device Missing</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Modal: Record Recovery -->
+<dialog id="modal-recover" style="max-width: 520px; border-radius: 10px; border: 1px solid var(--border-light); background: var(--bg-card); color: var(--text-main); padding: 1.5rem;">
+  <form method="post" action="/admin/missing/recover">
+    <h3 style="margin-bottom: 0.75rem; color: var(--accent-green);">✓ Record Missing Device Recovery</h3>
+    <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1rem;">
+      Record the physical recovery of this device. Recovered devices must be inspected before returning to Available.
+    </p>
+    <div class="form-group">
+      <label for="recover-serial">Device Serial Number</label>
+      <input id="recover-serial" name="serial" class="mono" readonly style="background: var(--bg-input);">
+    </div>
+    <div class="form-group">
+      <label for="recover-found-by">Found / Handed Over By</label>
+      <input id="recover-found-by" name="found_by" placeholder="e.g. Found in packing station, returned by employee">
+    </div>
+    <div class="form-group">
+      <label for="recover-condition">Physical Condition</label>
+      <select id="recover-condition" name="recovery_condition">
+        <option value="Working">Working / Undamaged</option>
+        <option value="Damaged">Damaged / Problem Detected</option>
+        <option value="Under Repair">Needs Maintenance / Repair</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="recover-post-status">Post-Recovery Status</label>
+      <select id="recover-post-status" name="post_recovery_status">
+        <option value="Unavailable">Unavailable (Pending Inspection) — Recommended</option>
+        <option value="Available">Available (Approved Immediately)</option>
+        <option value="Damaged">Damaged</option>
+        <option value="Under Repair">Under Repair</option>
+      </select>
+    </div>
+    <div class="form-group">
+      <label for="recover-notes">Recovery Remarks</label>
+      <textarea id="recover-notes" name="recovery_notes" rows="2" placeholder="Inspection remarks, battery check..."></textarea>
+    </div>
+    <div style="display: flex; justify-content: flex-end; gap: 0.5rem; margin-top: 1rem;">
+      <button class="btn btn-secondary" type="button" onclick="document.getElementById('modal-recover').close()">Cancel</button>
+      <button class="btn btn-primary" type="submit">Save Recovery Record</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+function openConfirmMissingModal(serial) {
+  document.getElementById('missing-serial').value = serial;
+  document.getElementById('modal-confirm-missing').showModal();
+}
+function openRecoverModal(serial) {
+  document.getElementById('recover-serial').value = serial;
+  document.getElementById('modal-recover').showModal();
+}
+</script>
+{% endblock %}
+

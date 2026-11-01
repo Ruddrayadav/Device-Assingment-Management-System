@@ -1,6 +1,20 @@
 {% extends "base.html" %}
 
 {% block content %}
+{% if legacy_accounts %}
+<div class="card" style="border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.08); margin-bottom: 1.5rem; padding: 1rem 1.25rem;">
+  <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+    <div style="font-size: 1.5rem; line-height: 1;">⚠️</div>
+    <div>
+      <div style="font-weight: 700; color: #f59e0b; margin-bottom: 0.25rem;">Security Advisory: Legacy Default Accounts Detected</div>
+      <div style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.4;">
+        Legacy account(s) (<b>{{ legacy_accounts|join(', ') }}</b>) exist in the database. For warehouse security, please review these accounts in <a href="/admin/users" style="color: #60a5fa; text-decoration: underline; font-weight: 600;">User Management</a> and update their passwords or deactivate unused accounts.
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
 <div class="flex-between" style="margin-bottom: 1.5rem; flex-wrap: wrap; gap: 1rem;">
   <div>
     <h1 style="font-size: 1.85rem; font-weight: 800;">24/7 Warehouse Operations Center</h1>
@@ -13,10 +27,10 @@
   </div>
 </div>
 
-<!-- Fleet Health KPIs -->
+<!-- Device Health KPIs -->
 <div class="kpi-grid">
   <div class="kpi-card">
-    <div class="kpi-label">Total Fleet</div>
+    <div class="kpi-label">Total Devices</div>
     <div class="kpi-value">{{ metrics.total_devices }}</div>
   </div>
   <div class="kpi-card">

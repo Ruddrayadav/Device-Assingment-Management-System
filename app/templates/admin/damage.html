@@ -7,21 +7,24 @@
     <div class="text-muted">Quarantine tracking, inspection, repair approvals and return-to-service validation</div>
   </div>
   <div style="display: flex; gap: 0.5rem;">
+    <a href="/admin/damage/reconcile" class="btn btn-secondary">⚡ Reconciliation Audit</a>
     <a href="/reports/csv/damage" class="btn btn-secondary">📥 Export CSV</a>
   </div>
 </div>
 
 <!-- Filter by Status -->
-<div class="card" style="padding: 1rem;">
-  <form method="get" action="/admin/damage" style="display: flex; gap: 0.75rem; align-items: flex-end;">
-    <div class="form-group" style="flex: 1; max-width: 300px;">
-      <label for="status_filter">Review Status</label>
+<div class="card" style="padding: 1rem; margin-bottom: 1.25rem;">
+  <form method="get" action="/admin/damage" style="display: flex; gap: 0.75rem; align-items: flex-end; flex-wrap: wrap;">
+    <div class="form-group" style="flex: 1; min-width: 260px;">
+      <label for="status_filter">Filter by Ticket Status</label>
       <select id="status_filter" name="status_filter">
-        <option value="All">All Reports</option>
-        <option value="Open" {{ 'selected' if status_filter == 'Open' else '' }}>Open (Awaiting Inspection)</option>
+        <option value="All" {{ 'selected' if status_filter == 'All' else '' }}>All Reports</option>
+        <option value="Pending Inspection" {{ 'selected' if status_filter == 'Pending Inspection' else '' }}>Pending Inspection</option>
+        <option value="Open" {{ 'selected' if status_filter in ('Open', 'Damaged') else '' }}>Damaged (Open / Pending Inspection)</option>
         <option value="Under Repair" {{ 'selected' if status_filter == 'Under Repair' else '' }}>Under Repair</option>
         <option value="Repaired/Available" {{ 'selected' if status_filter == 'Repaired/Available' else '' }}>Repaired / Back to Stock</option>
         <option value="Written Off" {{ 'selected' if status_filter == 'Written Off' else '' }}>Written Off / Scrapped</option>
+        <option value="Closed" {{ 'selected' if status_filter == 'Closed' else '' }}>Closed</option>
       </select>
     </div>
     <button class="btn btn-primary" type="submit">Filter</button>
@@ -29,11 +32,11 @@
   </form>
 </div>
 
-<!-- Damage & Fleet Reconciliation Check -->
-<div class="card" style="padding: 1rem; border-left: 4px solid {{ '#ef4444' if reconciliation.has_issues else '#10b981' }};">
+<!-- Damage & Device Reconciliation Check -->
+<div class="card" style="padding: 1rem; border-left: 4px solid {{ '#ef4444' if reconciliation.has_issues else '#10b981' }}; margin-bottom: 1.25rem;">
   <div class="flex-between">
     <div style="font-weight: 700; font-size: 1rem; color: {{ '#f87171' if reconciliation.has_issues else '#34d399' }};">
-      {{ '⚠️ Quarantine Discrepancies Detected' if reconciliation.has_issues else '✓ Fleet & Quarantine Fully Reconciled' }}
+      {{ '⚠️ Quarantine Discrepancies Detected' if reconciliation.has_issues else '✓ Devices & Quarantine Fully Reconciled' }}
     </div>
     <span class="badge {{ 'badge-damaged' if reconciliation.has_issues else 'badge-available' }}">
       {{ 'Action Required' if reconciliation.has_issues else 'Consistent' }}
@@ -44,7 +47,7 @@
   <div style="margin-top: 0.75rem; font-size: 0.875rem; display: flex; flex-direction: column; gap: 0.5rem;">
     {% if reconciliation.damaged_without_records %}
     <div style="color: #fca5a5;">
-      • <b>Damaged status without open ticket:</b>
+      • <b>Damaged status without open ticket ({{ reconciliation.damaged_without_records|length }}):</b>
       {% for d in reconciliation.damaged_without_records %}
         <span class="mono">{{ d.serial }}</span>{{ ', ' if not loop.last else '' }}
       {% endfor %}
@@ -54,7 +57,7 @@
 
     {% if reconciliation.repair_without_records %}
     <div style="color: #fca5a5;">
-      • <b>Under Repair status without ticket:</b>
+      • <b>Under Repair status without ticket ({{ reconciliation.repair_without_records|length }}):</b>
       {% for d in reconciliation.repair_without_records %}
         <span class="mono">{{ d.serial }}</span>{{ ', ' if not loop.last else '' }}
       {% endfor %}
@@ -64,7 +67,7 @@
 
     {% if reconciliation.open_dmg_available %}
     <div style="color: #fca5a5;">
-      • <b>Available devices with open damage report:</b>
+      • <b>Available devices with active damage report ({{ reconciliation.open_dmg_available|length }}):</b>
       {% for r in reconciliation.open_dmg_available %}
         <span class="mono">{{ r.serial }}</span> (Report #{{ r.id }}){{ ', ' if not loop.last else '' }}
       {% endfor %}
@@ -72,14 +75,29 @@
     </div>
     {% endif %}
 
+    {% if reconciliation.open_dmg_issued %}
+    <div style="color: #fca5a5;">
+      • <b>Issued devices with active damage report ({{ reconciliation.open_dmg_issued|length }}):</b>
+      {% for r in reconciliation.open_dmg_issued %}
+        <span class="mono">{{ r.serial }}</span> (Report #{{ r.id }}){{ ', ' if not loop.last else '' }}
+      {% endfor %}
+    </div>
+    {% endif %}
+
     {% if reconciliation.duplicate_open_serials %}
     <div style="color: #fca5a5;">
-      • <b>Duplicate open damage tickets for single device:</b>
+      • <b>Duplicate open damage tickets for single device ({{ reconciliation.duplicate_open_serials|length }}):</b>
       {% for s in reconciliation.duplicate_open_serials %}
         <span class="mono">{{ s }}</span>{{ ', ' if not loop.last else '' }}
       {% endfor %}
     </div>
     {% endif %}
+
+    <div style="margin-top: 0.5rem;">
+      <a href="/admin/damage/reconcile" class="btn btn-sm btn-primary" style="font-weight: 700;">
+        ⚡ Review & Reconcile All Discrepancies ({{ reconciliation.damaged_without_records|length + reconciliation.repair_without_records|length }})
+      </a>
+    </div>
   </div>
   {% else %}
   <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.35rem;">
@@ -95,13 +113,15 @@
       <thead>
         <tr>
           <th>ID</th>
-          <th>Reported Time</th>
           <th>Device Serial</th>
-          <th>Worker ID / Name</th>
-          <th>Fault Category</th>
-          <th>Details</th>
+          <th>Make / Model</th>
+          <th>Department</th>
+          <th>Device Status</th>
+          <th>Fault / Issue</th>
+          <th>Record Source</th>
           <th>Reported By</th>
-          <th>Current Status</th>
+          <th>Date Recorded</th>
+          <th>Ticket Status</th>
           <th>Resolution Action</th>
         </tr>
       </thead>
@@ -109,41 +129,72 @@
         {% for r in reports %}
         <tr>
           <td class="mono">{{ r.id }}</td>
-          <td class="mono" style="font-size: 0.8rem; white-space: nowrap;">
-            {{ r.report_time|datetime12 }}
-          </td>
           <td class="mono"><b>{{ r.serial }}</b></td>
           <td>
-            {{ r.employee_name or '—' }}
-            {% if r.employee_id %}
-            <small class="text-muted mono">({{ r.employee_id }})</small>
+            {% if r.device %}
+              {{ r.device.make }} {{ r.device.model }}
+            {% else %}
+              —
             {% endif %}
           </td>
-          <td><span class="badge badge-damaged">{{ r.fault_type }}</span></td>
-          <td style="font-size: 0.85rem;">{{ r.details }}</td>
-          <td>{{ r.reported_by_name }}</td>
+          <td>{{ r.department or (r.device.department if r.device else '—') }}</td>
           <td>
-            <span class="badge {{ 'badge-damaged' if r.review_status == 'Open' else ('badge-repair' if r.review_status == 'Under Repair' else 'badge-available') }}">
+            {% set dev_st = r.device.status if r.device else '—' %}
+            <span class="badge {{ 'badge-available' if dev_st == 'Available' else ('badge-repair' if dev_st == 'Under Repair' else 'badge-damaged') }}">
+              {{ dev_st }}
+            </span>
+          </td>
+          <td><span class="badge badge-damaged">{{ r.fault_type }}</span></td>
+          <td>
+            {% set src = r.source or 'Operator Report' %}
+            <span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; border: 1px solid rgba(147, 51, 234, 0.3); font-size: 0.75rem;">
+              {{ src }}
+            </span>
+          </td>
+          <td>
+            {% if src == 'Operator Report' and r.reported_by_name %}
+              {{ r.reported_by_name }}
+              {% if r.employee_id %}
+                <br><small class="text-muted mono">Worker: {{ r.employee_id }}</small>
+              {% endif %}
+            {% elif r.reported_by_name and r.reported_by_name != 'System Reconciliation' and r.reported_by_name != 'Excel Inventory Import' and r.reported_by_name != 'Excel Master Import' %}
+              {{ r.reported_by_name }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td class="mono" style="font-size: 0.8rem; white-space: nowrap;">
+            {% if r.report_date %}
+              {{ r.report_date }}
+            {% elif r.report_time %}
+              {{ r.report_time|datetime12 }}
+            {% else %}
+              <span class="text-muted">—</span>
+            {% endif %}
+          </td>
+          <td>
+            <span class="badge {{ 'badge-damaged' if r.review_status in ('Open', 'Pending Inspection') else ('badge-repair' if r.review_status == 'Under Repair' else 'badge-available') }}">
               {{ r.review_status }}
             </span>
           </td>
           <td>
-            <form method="post" action="/admin/damage/{{ r.id }}/update" style="display: flex; gap: 0.5rem; align-items: center;">
+            <form method="post" action="/admin/damage/{{ r.id }}/update" style="display: flex; gap: 0.35rem; align-items: center;">
               <select name="review_status" style="font-size: 0.8rem; padding: 0.25rem 0.5rem; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
+                <option value="Pending Inspection" {{ 'selected' if r.review_status == 'Pending Inspection' else '' }}>Pending Inspection</option>
                 <option value="Open" {{ 'selected' if r.review_status == 'Open' else '' }}>Open</option>
                 <option value="Under Repair" {{ 'selected' if r.review_status == 'Under Repair' else '' }}>Under Repair</option>
-                <option value="Repaired/Available" {{ 'selected' if r.review_status == 'Repaired/Available' else '' }}>Repaired (Return to Fleet)</option>
+                <option value="Repaired/Available" {{ 'selected' if r.review_status == 'Repaired/Available' else '' }}>Repaired (Return to Inventory)</option>
                 <option value="Written Off" {{ 'selected' if r.review_status == 'Written Off' else '' }}>Written Off</option>
                 <option value="Closed" {{ 'selected' if r.review_status == 'Closed' else '' }}>Closed</option>
               </select>
-              <input name="resolution_notes" value="{{ r.resolution_notes or '' }}" placeholder="Resolution note..." style="font-size: 0.8rem; padding: 0.25rem 0.5rem; width: 140px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
+              <input name="resolution_notes" value="{{ r.resolution_notes or '' }}" placeholder="Resolution note..." style="font-size: 0.8rem; padding: 0.25rem 0.5rem; width: 130px; background: var(--bg-input); color: #fff; border: 1px solid var(--border); border-radius: 4px;">
               <button class="btn btn-sm btn-primary" type="submit">Update</button>
             </form>
           </td>
         </tr>
         {% else %}
         <tr>
-          <td colspan="9" class="text-muted">No damage reports on file.</td>
+          <td colspan="11" class="text-muted" style="text-align: center; padding: 2rem;">No damage reports matching the selected filter.</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -151,4 +202,3 @@
   </div>
 </div>
 {% endblock %}
-

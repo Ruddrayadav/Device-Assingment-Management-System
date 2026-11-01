@@ -22,3 +22,54 @@ def _cleanup():
 
 atexit.register(_cleanup)
 
+def seed_test_users():
+    """Seeds test administrator and operators in isolated test database for test cases."""
+    from datetime import datetime
+    from app.database import SessionLocal
+    from app.models import User
+    from app.auth import hash_password
+    db = SessionLocal()
+    try:
+        now = datetime.now()
+        admin_user = db.query(User).filter(User.username == "hhdadmin").first()
+        if not admin_user:
+            db.add(User(
+                username="hhdadmin",
+                password_hash=hash_password("admin12345"),
+                full_name="Warehouse Administrator",
+                role="admin",
+                active=True,
+                created_at=now,
+                updated_at=now
+            ))
+        else:
+            admin_user.active = True
+            admin_user.role = "admin"
+            admin_user.password_hash = hash_password("admin12345")
+        if not db.query(User).filter(User.username == "operator1").first():
+            db.add(User(
+                username="operator1",
+                password_hash=hash_password("operator123"),
+                full_name="Rahul (Operator 1)",
+                role="operator",
+                active=True,
+                created_at=now,
+                updated_at=now
+            ))
+        if not db.query(User).filter(User.username == "operator2").first():
+            db.add(User(
+                username="operator2",
+                password_hash=hash_password("operator123"),
+                full_name="Amit (Operator 2)",
+                role="operator",
+                active=True,
+                created_at=now,
+                updated_at=now
+            ))
+        db.commit()
+    finally:
+        db.close()
+
+seed_initial_data_if_needed = seed_test_users
+
+

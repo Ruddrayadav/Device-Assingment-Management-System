@@ -27,17 +27,16 @@ def cell_to_str(val: Any) -> str:
 
 def map_device_condition_and_status(remarks: str) -> Tuple[str, str, Optional[str]]:
     """
-    Maps inventory remarks to device fleet status and condition:
-    Working -> (Available, Working, None)
-    Available -> (Available, Working, None)
-    Not Working -> (Damaged, Damaged, None)
+    Maps inventory remarks to device status and condition:
+    Working / Available -> (Available, Working, None)
+    Not Working / Damaged -> (Damaged, Damaged, None)
     Under Repair -> (Under Repair, Under Repair, None)
-    Damaged -> (Damaged, Damaged, None)
+    Unavailable / Pending Inspection / Blank -> (Unavailable, Working, None)
     Unknown remarks -> ("", "", error_explanation)
     """
-    if not remarks:
-        # Default to Working if empty
-        return "Available", "Working", None
+    if not remarks or not remarks.strip():
+        # Default for new devices when status is not explicitly provided
+        return "Unavailable", "Working", None
 
     norm = remarks.strip().lower()
     if norm in ("working", "available", "ok", "good"):
@@ -46,8 +45,10 @@ def map_device_condition_and_status(remarks: str) -> Tuple[str, str, Optional[st
         return "Damaged", "Damaged", None
     elif norm in ("under repair", "in repair", "repairing", "repair"):
         return "Under Repair", "Under Repair", None
+    elif norm in ("unavailable", "pending inspection", "inspection", "pending", "new"):
+        return "Unavailable", "Working", None
     else:
-        return "", "", f"Unknown or ambiguous status/remarks: '{remarks}'. Must be Working, Available, Not Working, or Under Repair."
+        return "", "", f"Unknown or ambiguous status/remarks: '{remarks}'. Must be Working, Available, Not Working, Under Repair, or Unavailable."
 
 def map_employee_status(status_raw: str) -> Tuple[bool, str, Optional[str]]:
     """
@@ -210,10 +211,10 @@ def validate_device_import(db: Session, file_bytes: bytes, filename: str) -> Dic
         make_val = row.get(field_mapping.get("make", ""), "").strip() or "CHAINWAY"
         model_val = row.get(field_mapping.get("model", ""), "").strip() or "HHD"
         dept_raw = row.get(field_mapping.get("department", ""), "").strip()
-        dept_val = dept_raw if dept_raw else "GENERAL"
-        dept_warn = "Blank Department: Defaulted to GENERAL (requires admin review)" if not dept_raw else None
+        dept_val = dept_raw if dept_raw else ""
+        dept_warn = None
 
-        remarks_val = row.get(field_mapping.get("remarks", ""), "").strip() or "Working"
+        remarks_val = row.get(field_mapping.get("remarks", ""), "").strip()
         date_val = row.get(field_mapping.get("inventory_date", ""), "").strip()
         sr_no_val = row.get(field_mapping.get("sr_no", ""), "").strip()
 
@@ -335,8 +336,8 @@ def commit_device_import(db: Session, valid_rows: List[Dict[str, Any]], mode: st
         for r in valid_rows:
             dev = db.query(Device).filter(Device.serial == r["serial"]).first()
             if not dev:
-                # Insert NEW
-                status_to_set = r.get("status", "Available")
+                # Insert NEW (Defaults to Unavailable/Pending Inspection unless explicitly stated)
+                status_to_set = r.get("status", "Unavailable")
                 if r["condition"] == "Damaged":
                     status_to_set = "Damaged"
                 elif r["condition"] == "Under Repair":
@@ -346,10 +347,11 @@ def commit_device_import(db: Session, valid_rows: List[Dict[str, Any]], mode: st
                     serial=r["serial"],
                     make=r["make"],
                     model=r["model"],
-                    department=r["department"],
+                    department=r.get("department") or None,
                     inventory_date=r["inventory_date"],
                     cover_qty=0,
                     status=status_to_set,
+                    unavailable_reason="Pending Inspection" if status_to_set == "Unavailable" else None,
                     condition=r["condition"],
                     notes=r["remarks"] or "Imported via Excel Master",
                     created_at=now,
@@ -358,12 +360,16 @@ def commit_device_import(db: Session, valid_rows: List[Dict[str, Any]], mode: st
                 db.add(dev)
                 inserted_count += 1
             else:
-                # Update existing
-                dev.make = r["make"]
-                dev.model = r["model"]
-                dev.department = r["department"]
-                dev.inventory_date = r["inventory_date"]
-                if r["remarks"]:
+                # Update existing without overwriting valid data with blanks
+                if r.get("make"):
+                    dev.make = r["make"]
+                if r.get("model"):
+                    dev.model = r["model"]
+                if r.get("department"):
+                    dev.department = r["department"]
+                if r.get("inventory_date"):
+                    dev.inventory_date = r["inventory_date"]
+                if r.get("remarks"):
                     dev.notes = r["remarks"]
 
                 # IMPORTANT: Never reset an Issued device to Available!
@@ -374,6 +380,13 @@ def commit_device_import(db: Session, valid_rows: List[Dict[str, Any]], mode: st
                         dev.status = "Under Repair"
                     elif dev.status in ("Damaged", "Under Repair") and r["condition"] == "Working":
                         dev.status = "Available"
+                        dev.unavailable_reason = None
+                    elif r.get("status") in ("Available", "Unavailable"):
+                        dev.status = r["status"]
+                        if dev.status == "Unavailable":
+                            dev.unavailable_reason = "Pending Inspection"
+                        else:
+                            dev.unavailable_reason = None
                     dev.condition = r["condition"]
 
                 dev.updated_at = now
@@ -394,9 +407,10 @@ def commit_device_import(db: Session, valid_rows: List[Dict[str, Any]], mode: st
                         serial=dev.serial,
                         employee_id=None,
                         employee_name="",
-                        department=dev.department,
+                        department=dev.department or "GENERAL",
                         fault_type=fault_lbl,
                         details=r["remarks"] or f"Excel Inventory Import ({fault_lbl})",
+                        source="Excel Master Import",
                         reported_by_id=None,
                         reported_by_name="Excel Inventory Import",
                         review_status="Pending Inspection"
@@ -661,7 +675,7 @@ def commit_employee_import(db: Session, valid_rows: List[Dict[str, Any]], mode: 
                 emp = Employee(
                     employee_id=r["employee_id"],
                     name=r["name"],
-                    department=r["department"],
+                    department=r["department"] or "General",
                     active=r["active"],
                     created_at=now,
                     updated_at=now
@@ -670,7 +684,8 @@ def commit_employee_import(db: Session, valid_rows: List[Dict[str, Any]], mode: 
                 inserted_count += 1
             else:
                 emp.name = r["name"]
-                emp.department = r["department"]
+                if r.get("department"):
+                    emp.department = r["department"]
                 emp.active = r["active"]
                 emp.updated_at = now
                 updated_count += 1
