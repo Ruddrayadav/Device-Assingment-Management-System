@@ -10,14 +10,14 @@
 
 <div style="max-width: 650px;">
   <div class="card">
-    <div class="card-title">🕒 Daily Reporting Cutoff Time</div>
-    <p class="text-muted" style="font-size: 0.875rem; margin-bottom: 1.25rem;">
-      The company operates 24/7 with <b>no formal shifts</b>. The daily cutoff time determines when unreturned handheld devices appear on the <b>Outstanding Devices Report</b>. Devices unreturned past this cutoff are flagged for investigation.
-    </p>
+    <div class="card-title">⚙️ Operational Parameters</div>
 
     <form method="post" action="/admin/settings">
-      <div class="form-group">
-        <label for="daily_cutoff_time">Daily Reporting Cutoff Time (HH:MM, 24-hour format) *</label>
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label for="daily_cutoff_time">🕒 Daily Reporting Cutoff Time (HH:MM, 24-hour format) *</label>
+        <p class="text-muted" style="font-size: 0.825rem; margin-bottom: 0.5rem;">
+          Determines when unreturned devices appear on the Outstanding Devices Report.
+        </p>
         <input 
           id="daily_cutoff_time" 
           name="daily_cutoff_time" 
@@ -26,11 +26,45 @@
           required 
           style="max-width: 200px;"
         >
-        <div class="text-muted" style="font-size: 0.8rem; margin-top: 0.35rem;">Current configured cutoff: <b>{{ current_cutoff }} (Asia/Kolkata)</b></div>
+        <div class="text-muted" style="font-size: 0.8rem; margin-top: 0.35rem;">Configured Cutoff: <b>{{ current_cutoff }} (Asia/Kolkata)</b></div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label for="backup_time">💾 Daily Automatic Backup Time (HH:MM, 24-hour format) *</label>
+        <p class="text-muted" style="font-size: 0.825rem; margin-bottom: 0.5rem;">
+          Scheduled time each day when the background engine automatically takes a disaster recovery snapshot (plus every 6 hours while the app runs).
+        </p>
+        <input 
+          id="backup_time" 
+          name="backup_time" 
+          type="time" 
+          value="{{ backup_time }}" 
+          required 
+          style="max-width: 200px;"
+        >
+        <div class="text-muted" style="font-size: 0.8rem; margin-top: 0.35rem;">Daily Backup Time: <b>{{ backup_time }} (Asia/Kolkata)</b></div>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.5rem;">
+        <label for="max_devices_per_worker">📱 Max Devices Per Worker (0 = Unlimited) *</label>
+        <p class="text-muted" style="font-size: 0.825rem; margin-bottom: 0.5rem;">
+          Limit how many devices a worker can hold simultaneously. When exceeded, the operator is prompted with a warning and must scan the worker barcode a second time within 10s to override.
+        </p>
+        <input 
+          id="max_devices_per_worker" 
+          name="max_devices_per_worker" 
+          type="number" 
+          min="0"
+          max="10"
+          value="{{ max_devices_per_worker }}" 
+          required 
+          style="max-width: 200px;"
+        >
+        <div class="text-muted" style="font-size: 0.8rem; margin-top: 0.35rem;">Current Limit: <b>{{ 'Unlimited' if max_devices_per_worker == 0 else max_devices_per_worker ~ ' device(s) per worker' }}</b></div>
       </div>
 
       <div style="margin-top: 1.5rem;">
-        <button class="btn btn-primary" type="submit">Save Cutoff Setting</button>
+        <button class="btn btn-primary" type="submit">Save Operational Settings</button>
       </div>
     </form>
   </div>

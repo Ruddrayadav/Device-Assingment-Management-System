@@ -14,7 +14,7 @@ import tests.conftest
 from fastapi.testclient import TestClient
 from main import app
 from tests.conftest import seed_initial_data_if_needed
-from app.config import BACKUP_DIR, DB_PATH
+from app.config import BACKUP_DIR, DB_PATH, today_kolkata_str
 from app.database import engine, Base, SessionLocal
 from app.models import User, Device, Employee, Transaction, DeviceAssignment, DamageReport
 from app.auth import sign_session, hash_password
@@ -295,7 +295,7 @@ class Version3FeaturesTestSuite(unittest.TestCase):
         tx_issue = db.query(Transaction).filter(Transaction.serial == "OP_DEV_01", Transaction.transaction_type == "Issue").order_by(Transaction.id.desc()).first()
         self.assertIsNotNone(tx_issue)
         self.assertEqual(tx_issue.operator_name, "Rahul (Operator 1)")
-        self.assertEqual(tx_issue.transaction_date, date.today().strftime("%Y-%m-%d"))
+        self.assertEqual(tx_issue.transaction_date, today_kolkata_str())
 
         # 4. Now Operator 2 (Amit) returns device
         self.client.cookies.set("hhd_session", self.op2_token)
@@ -306,7 +306,7 @@ class Version3FeaturesTestSuite(unittest.TestCase):
         tx_ret = db.query(Transaction).filter(Transaction.serial == "OP_DEV_01", Transaction.transaction_type == "Return").order_by(Transaction.id.desc()).first()
         self.assertIsNotNone(tx_ret)
         self.assertEqual(tx_ret.operator_name, "Amit (Operator 2)")
-        self.assertEqual(tx_ret.transaction_date, date.today().strftime("%Y-%m-%d"))
+        self.assertEqual(tx_ret.transaction_date, today_kolkata_str())
         db.close()
 
     # -------------------------------------------------------------

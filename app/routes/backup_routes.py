@@ -17,7 +17,7 @@ from app.config import BACKUP_DIR, MAX_UPLOAD_MB
 from app.backup import (
     create_safe_backup, list_backups, restore_backup,
     delete_backup, safe_backup_path, get_live_db_stats,
-    validate_uploaded_db
+    validate_uploaded_db, get_last_auto_backup_info
 )
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -33,11 +33,13 @@ async def backup_page(
 ):
     live_db = get_live_db_stats()
     backups = list_backups()
+    last_auto_backup = get_last_auto_backup_info()
     return templates.TemplateResponse(request=request, name="admin/backups.html", context={
         "title": "Database Files - Admin",
         "user": admin,
         "live_db": live_db,
         "backups": backups,
+        "last_auto_backup": last_auto_backup,
         "msg": request.query_params.get("msg"),
         "error": request.query_params.get("error")
     })

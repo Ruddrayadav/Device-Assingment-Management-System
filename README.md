@@ -121,6 +121,9 @@ A robust, locally hosted, zero-delay warehouse device allocation and return syst
    ```
 
 ### Step 3: First-Time Administrator Setup & Connect Operators
+> [!IMPORTANT]
+> **Never copy or commit the data folder; a new install must start with an empty data folder so `/setup` runs.** Do not copy databases from development or other servers, which would bypass initial setup.
+
 1. If this is a fresh installation, navigate to `http://127.0.0.1:8000` or `http://127.0.0.1:8000/setup` to configure your primary administrator account with a strong password (or run `python setup_admin.py` in the server terminal).
 2. Log in to `/admin` using the administrator credentials.
 3. In **Users** (`/admin/users`), create individual accounts for each warehouse operator (e.g., Rahul, Amit, Suresh) with individual usernames and secure passwords.

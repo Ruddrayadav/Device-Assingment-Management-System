@@ -4,18 +4,76 @@ from pathlib import Path
 from app.config import DB_PATH, BACKUP_DIR
 from app.database import engine
 
+def is_schema_current(target_path: Path = None) -> bool:
+    """
+    Checks if the database schema already has all Version 3.0 tables, columns, and cleaned structures.
+    Returns True if migration is not needed, preventing redundant pre_migration_upgrade backups on restart.
+    """
+    path = target_path if target_path is not None else DB_PATH
+    if not path.exists() or path.stat().st_size == 0:
+        return True
+
+    try:
+        conn = sqlite3.connect(f"file:{path.resolve()}?mode=ro", uri=True, timeout=5.0)
+        try:
+            cur = conn.cursor()
+            tables = set(r[0] for r in cur.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall())
+            required_tables = {"users", "employees", "devices", "device_assignments", "transactions", "damage_reports", "missing_events", "service_records", "system_settings"}
+            if not required_tables.issubset(tables):
+                return False
+            if "shift_logs" in tables:
+                return False
+
+            def get_cols(tbl):
+                return set(r[1] for r in cur.execute(f"PRAGMA table_info({tbl})").fetchall())
+
+            dev_cols = get_cols("devices")
+            if not {"department", "inventory_date", "unavailable_reason", "service_centre_name", "service_reference", "service_sent_date", "service_expected_return"}.issubset(dev_cols):
+                return False
+
+            tx_cols = get_cols("transactions")
+            if not {"transaction_date", "issued_by_operator_name", "returned_by_operator_name", "issued_at", "returned_at"}.issubset(tx_cols) or "shift_name" in tx_cols:
+                return False
+
+            asgn_cols = get_cols("device_assignments")
+            if not {"issued_date", "returned_date"}.issubset(asgn_cols) or "issued_shift" in asgn_cols:
+                return False
+
+            dmg_cols = get_cols("damage_reports")
+            if not {"report_date", "source"}.issubset(dmg_cols) or "shift_name" in dmg_cols:
+                return False
+
+            audit_cols = get_cols("audit_logs")
+            if not {"role", "previous_value", "new_value", "status", "reason"}.issubset(audit_cols):
+                return False
+
+            user_cols = get_cols("users")
+            if "default_shift" in user_cols:
+                return False
+
+            return True
+        finally:
+            conn.close()
+    except Exception:
+        return False
+
 def run_schema_migration(target_path: Path = None):
     """
     Safely migrates SQLite database to Version 3.0 schema with verified pre-migration backup:
     1. Verifies database path.
-    2. Creates a consistent safety backup via SQLite backup API.
-    3. Verifies backup integrity.
-    4. Runs idempotent schema migrations (columns, indexes, shift removal, roles, service records, missing events).
-    5. Verifies database integrity via PRAGMA integrity_check.
-    6. If migration fails, rolls back safely.
+    2. Skips backup and migration if schema is already current.
+    3. Creates a consistent safety backup via SQLite backup API.
+    4. Verifies backup integrity.
+    5. Runs idempotent schema migrations (columns, indexes, shift removal, roles, service records, missing events).
+    6. Verifies database integrity via PRAGMA integrity_check.
+    7. If migration fails, rolls back safely.
     """
     path = target_path if target_path is not None else DB_PATH
     if not path.exists() or path.stat().st_size == 0:
+        return
+
+    # Check if schema is already fully migrated; if so, skip redundant backup creation
+    if is_schema_current(path):
         return
 
     # 1. Create consistent pre-migration backup

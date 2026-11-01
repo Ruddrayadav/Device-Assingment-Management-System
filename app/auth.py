@@ -12,10 +12,11 @@ from app.config import SECRET_KEY
 from app.database import get_db
 from app.models import User
 
-# Brute-force & Rate Limiting Protection
+# Brute-force & Rate Limiting Protection (username, client IP pair + separate high IP limit)
 class LoginRateLimiter:
-    def __init__(self, max_attempts: int = 5, lockout_window_sec: int = 300):
+    def __init__(self, max_attempts: int = 5, lockout_window_sec: int = 300, max_ip_attempts: int = 30):
         self.max_attempts = max_attempts
+        self.max_ip_attempts = max_ip_attempts
         self.lockout_window_sec = lockout_window_sec
         self._lock = threading.Lock()
         self._store: Dict[str, Dict[str, Any]] = {}
@@ -28,16 +29,78 @@ class LoginRateLimiter:
         for k in keys_to_del:
             self._store.pop(k, None)
 
+    def is_locked_out_pair(self, username: str, ip: str) -> Tuple[bool, int, str]:
+        """
+        Checks whether either the specific (username, ip) pair or the overall client IP is locked out.
+        Returns (is_locked, remaining_seconds, reason) where reason is 'pair' or 'ip'.
+        """
+        now = time.time()
+        with self._lock:
+            self._clean_expired(now)
+            pair_key = f"pair:{username.lower().strip()}:{ip}"
+            ip_key = f"ip:{ip}"
+
+            p_entry = self._store.get(pair_key)
+            if p_entry and now < p_entry.get("locked_until", 0):
+                return True, max(1, int(p_entry["locked_until"] - now)), "pair"
+
+            i_entry = self._store.get(ip_key)
+            if i_entry and now < i_entry.get("locked_until", 0):
+                return True, max(1, int(i_entry["locked_until"] - now)), "ip"
+
+            return False, 0, ""
+
+    def record_failure_pair(self, username: str, ip: str) -> Tuple[int, int, bool]:
+        """
+        Records failure against (username, client_ip) pair and client_ip limit (30 attempts).
+        Returns (pair_attempts, pair_lock_sec, is_ip_locked).
+        """
+        now = time.time()
+        with self._lock:
+            self._clean_expired(now)
+            pair_key = f"pair:{username.lower().strip()}:{ip}"
+            ip_key = f"ip:{ip}"
+
+            # 1. Update (username, ip) pair
+            p_entry = self._store.get(pair_key)
+            if not p_entry or (now - p_entry.get("first_attempt", 0) > self.lockout_window_sec and now > p_entry.get("locked_until", 0)):
+                p_entry = {"attempts": 1, "first_attempt": now, "locked_until": 0}
+                self._store[pair_key] = p_entry
+            else:
+                p_entry["attempts"] += 1
+
+            p_attempts = p_entry["attempts"]
+            p_lock = 0
+            if p_attempts >= self.max_attempts:
+                p_entry["locked_until"] = now + self.lockout_window_sec
+                p_lock = self.lockout_window_sec
+
+            # 2. Update IP limit
+            i_entry = self._store.get(ip_key)
+            if not i_entry or (now - i_entry.get("first_attempt", 0) > self.lockout_window_sec and now > i_entry.get("locked_until", 0)):
+                i_entry = {"attempts": 1, "first_attempt": now, "locked_until": 0}
+                self._store[ip_key] = i_entry
+            else:
+                i_entry["attempts"] += 1
+
+            ip_locked = False
+            if i_entry["attempts"] >= self.max_ip_attempts:
+                i_entry["locked_until"] = now + self.lockout_window_sec
+                ip_locked = True
+
+            return p_attempts, p_lock, ip_locked
+
     def is_locked_out(self, key: str) -> Tuple[bool, int]:
         now = time.time()
         with self._lock:
             self._clean_expired(now)
             entry = self._store.get(key)
-            if not entry:
-                return False, 0
-            locked_until = entry.get("locked_until", 0)
-            if now < locked_until:
-                return True, max(1, int(locked_until - now))
+            if entry and now < entry.get("locked_until", 0):
+                return True, max(1, int(entry["locked_until"] - now))
+            prefix = f"pair:{key.lower().strip()}:"
+            for k, v in self._store.items():
+                if k.startswith(prefix) and now < v.get("locked_until", 0):
+                    return True, max(1, int(v["locked_until"] - now))
             return False, 0
 
     def record_failure(self, key: str) -> Tuple[int, int]:
@@ -57,19 +120,31 @@ class LoginRateLimiter:
                 return attempts, self.lockout_window_sec
             return attempts, 0
 
+    def reset_pair(self, username: str, ip: str):
+        with self._lock:
+            self._store.pop(f"pair:{username.lower().strip()}:{ip}", None)
+            self._store.pop(f"ip:{ip}", None)
+
     def reset(self, key: str):
         with self._lock:
             self._store.pop(key, None)
+            prefix = f"pair:{key.lower().strip()}:"
+            for k in [k for k in self._store if k.startswith(prefix)]:
+                self._store.pop(k, None)
 
     def unlock_user(self, username: str):
+        uname = username.lower().strip()
         with self._lock:
-            self._store.pop(username.lower().strip(), None)
+            self._store.pop(uname, None)
+            prefix = f"pair:{uname}:"
+            for k in [k for k in self._store if k.startswith(prefix)]:
+                self._store.pop(k, None)
 
     def clear_all(self):
         with self._lock:
             self._store.clear()
 
-login_limiter = LoginRateLimiter(max_attempts=5, lockout_window_sec=300)
+login_limiter = LoginRateLimiter(max_attempts=5, lockout_window_sec=300, max_ip_attempts=30)
 
 
 # Password hashing using PBKDF2-HMAC-SHA256 (standard library, zero native dependency risk on Windows)
@@ -160,7 +235,8 @@ def decode_session(token: str) -> Optional[Dict[str, Any]]:
 ROLE_ADMIN = "admin"
 ROLE_INVENTORY_MANAGER = "inventory_manager"
 ROLE_OPERATOR = "operator"
-VALID_ROLES = {ROLE_ADMIN, ROLE_INVENTORY_MANAGER, ROLE_OPERATOR}
+ROLE_DISPLAY = "display"
+VALID_ROLES = {ROLE_ADMIN, ROLE_INVENTORY_MANAGER, ROLE_OPERATOR, ROLE_DISPLAY}
 
 def is_local_client(request: Request) -> bool:
     """
@@ -242,6 +318,21 @@ def require_user(request: Request, db: Session = Depends(get_db)) -> User:
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,
             headers={"Location": f"/login?next={request.url.path}"}
         )
+
+    # Display role is read-only and restricted exclusively to the wall display board
+    if user.role == ROLE_DISPLAY:
+        path = request.url.path
+        if path not in ("/board", "/api/board/live") and not path.startswith("/static/"):
+            if path.startswith("/api/"):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Display role is restricted exclusively to the wall display board."
+                )
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied. Wall display account is restricted to display board only."
+            )
+
     return user
 
 def require_admin(request: Request, user: User = Depends(require_user)) -> User:

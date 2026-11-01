@@ -44,6 +44,7 @@
         <select id="role" name="role">
           <option value="operator">Operator (Workstation only)</option>
           <option value="admin">Administrator (Full Access)</option>
+          <option value="display">Wall Display (Board only · 30-day session)</option>
         </select>
       </div>
     </div>
@@ -79,7 +80,7 @@
           </td>
           <td>{{ u.full_name }}</td>
           <td>
-            <span class="badge {{ 'badge-available' if u.role == 'admin' else 'badge-issued' }}">
+            <span class="badge {{ 'badge-available' if u.role == 'admin' else ('badge-available' if u.role == 'display' else 'badge-issued') }}" style="{{ 'background: rgba(14, 165, 233, 0.15); color: #38bdf8; border: 1px solid rgba(14, 165, 233, 0.3);' if u.role == 'display' else '' }}">
               {{ u.role|upper }}
             </span>
           </td>

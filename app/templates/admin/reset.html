@@ -6,8 +6,48 @@
     <h1 style="font-size: 1.75rem; font-weight: 800; color: #ef4444;">Controlled Initial Data Reset</h1>
     <div class="text-muted">Purge demo and sample operational data to prepare the system for actual company Excel master import.</div>
   </div>
-  <a href="/admin" class="btn btn-secondary">← Back to Dashboard</a>
+  <div style="display: flex; gap: 0.75rem; align-items: center;">
+    {% if not is_live %}
+    <form method="post" action="/admin/reset/go-live" onsubmit="return confirm('Are you sure you want to lock demo reset and mark the system as LIVE? Once locked, reset cannot be run from the web app.');">
+      <button class="btn btn-warning" type="submit" style="font-weight: 700;">
+        🚀 Go Live - lock demo reset
+      </button>
+    </form>
+    {% endif %}
+    <a href="/admin" class="btn btn-secondary">← Back to Dashboard</a>
+  </div>
 </div>
+
+{% if is_live %}
+<div class="card" style="border-left: 4px solid #10b981; background: rgba(16, 185, 129, 0.08); margin-bottom: 1.5rem; padding: 1.25rem;">
+  <div style="display: flex; gap: 0.75rem; align-items: flex-start;">
+    <div style="font-size: 1.75rem; line-height: 1;">🔒</div>
+    <div>
+      <div style="font-weight: 800; font-size: 1.1rem; color: #10b981; margin-bottom: 0.35rem;">System is LIVE — Demo Reset is Permanently Locked</div>
+      <div style="color: var(--text-secondary); font-size: 0.9rem; line-height: 1.5;">
+        This installation has been marked as <b>LIVE</b> for production warehouse operations. The initial demo data reset endpoint is permanently locked to prevent accidental data erasure.
+        <br>
+        If emergency administrative unlocking is required on the central server PC, run:
+        <code class="mono" style="background: rgba(0,0,0,0.3); padding: 0.2rem 0.5rem; border-radius: 4px; color: #60a5fa; margin-left: 0.25rem;">python setup_admin.py --unlock-reset</code>
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{% if issued_count > 0 %}
+<div class="card" style="border-left: 4px solid #f59e0b; background: rgba(245, 158, 11, 0.08); margin-bottom: 1.5rem; padding: 1rem 1.25rem;">
+  <div style="display: flex; gap: 0.75rem; align-items: center;">
+    <div style="font-size: 1.5rem; line-height: 1;">⚠️</div>
+    <div>
+      <div style="font-weight: 700; color: #f59e0b;">Cannot Reset While Devices Are Issued</div>
+      <div style="color: var(--text-secondary); font-size: 0.85rem;">
+        There are currently <b>{{ issued_count }} device(s)</b> with status <b>Issued</b>. All devices must be returned before initial data reset can be executed.
+      </div>
+    </div>
+  </div>
+</div>
+{% endif %}
 
 <!-- Affected Records Count Card -->
 <div class="card" style="border-left: 4px solid #ef4444; margin-bottom: 1.5rem;">
@@ -52,21 +92,21 @@
 </div>
 
 <!-- Confirmation Form -->
-<div class="card" style="max-width: 650px;">
+<div class="card" style="max-width: 650px; {{ 'opacity: 0.6; pointer-events: none;' if is_live else '' }}">
   <div class="card-title">Admin Password & Confirmation</div>
   <form method="post" action="/admin/reset">
     <div class="form-group" style="margin-bottom: 1rem;">
       <label for="admin_password">Enter Your Administrator Password *</label>
-      <input id="admin_password" name="admin_password" type="password" required placeholder="Administrator password">
+      <input id="admin_password" name="admin_password" type="password" required placeholder="Administrator password" {{ 'disabled' if is_live else '' }}>
     </div>
 
     <div class="form-group" style="margin-bottom: 1.25rem;">
       <label for="confirmation_text">Type <code class="mono" style="color: #ef4444; font-weight: 700;">CONFIRM RESET</code> to confirm *</label>
-      <input id="confirmation_text" name="confirmation_text" required placeholder="CONFIRM RESET" autocomplete="off">
+      <input id="confirmation_text" name="confirmation_text" required placeholder="CONFIRM RESET" autocomplete="off" {{ 'disabled' if is_live else '' }}>
     </div>
 
     <div style="display: flex; gap: 1rem;">
-      <button class="btn btn-danger" type="submit" style="padding: 0.65rem 1.75rem;">
+      <button class="btn btn-danger" type="submit" style="padding: 0.65rem 1.75rem;" {{ 'disabled' if is_live or issued_count > 0 else '' }}>
         ⚠️ Wipe Demo Operational Data & Create Safety Backup
       </button>
       <a href="/admin" class="btn btn-secondary">Cancel</a>

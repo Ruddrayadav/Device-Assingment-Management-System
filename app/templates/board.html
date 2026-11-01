@@ -49,6 +49,14 @@
 {% endblock %}
 
 {% block content %}
+<!-- Disconnected Warning Banner for Warehouse Wall TV -->
+<div id="disconnected-banner" style="display: none; background: #dc2626; color: white; padding: 1.15rem 1.5rem; border-radius: 8px; font-weight: 800; font-size: 1.25rem; text-align: center; margin-bottom: 1.25rem; box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.5); border: 2px solid #ef4444;">
+  ⚠️ Disconnected - please sign in
+  <div style="font-size: 0.9rem; font-weight: 400; margin-top: 0.35rem; opacity: 0.9;">
+    Network connection lost or display session expired. <a href="/login?next=/board" style="color: #fef08a; text-decoration: underline; font-weight: 700; margin-left: 0.5rem;">Click here to sign in</a>
+  </div>
+</div>
+
 <div class="flex-between" style="margin-bottom: 1.25rem;">
   <div>
     <h1 style="font-size: 1.75rem; font-weight: 800;">Warehouse Live Device Board</h1>
@@ -158,6 +166,7 @@
 {% block scripts %}
 <script>
   let currentVersion = '{{ board.version }}';
+  let pollFailures = 0;
 
   function updateClock() {
     const el = document.getElementById('board-clock');
@@ -191,10 +200,20 @@
   async function pollBoard() {
     try {
       const res = await fetch(`/api/board/live?v=${encodeURIComponent(currentVersion)}`);
-      if (res.status === 401 || res.status === 307) {
-        window.location.href = '/login?next=/board';
+      if (!res.ok) {
+        pollFailures++;
+        if (pollFailures >= 3) {
+          const banner = document.getElementById('disconnected-banner');
+          if (banner) banner.style.display = 'block';
+        }
         return;
       }
+
+      // Success: reset failure counter and hide banner
+      pollFailures = 0;
+      const banner = document.getElementById('disconnected-banner');
+      if (banner) banner.style.display = 'none';
+
       const data = await res.json();
       if (data.changed && data.board) {
         currentVersion = data.board.version;
@@ -244,7 +263,13 @@
           `).join('') || '<tr><td colspan="5" class="text-muted">Every device in the warehouse was handled today.</td></tr>';
         }
       }
-    } catch (e) {}
+    } catch (e) {
+      pollFailures++;
+      if (pollFailures >= 3) {
+        const banner = document.getElementById('disconnected-banner');
+        if (banner) banner.style.display = 'block';
+      }
+    }
   }
 
   setInterval(pollBoard, 3000);

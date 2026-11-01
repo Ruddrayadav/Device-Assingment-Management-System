@@ -175,27 +175,40 @@
   async function sendScanRequest(code) {
     if (!code) return;
 
-    try {
-      const payload = {
-        code: code,
-        mode: currentMode,
-        pending: pendingState ? { type: pendingState.type, code: pendingState.code } : null,
-        idempotency_key: 'scan_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
-        strict_two_scan: true
-      };
+    const payload = {
+      code: code,
+      mode: currentMode,
+      pending: pendingState ? { ...pendingState } : null,
+      idempotency_key: 'scan_' + Date.now() + '_' + Math.random().toString(36).substring(2, 7),
+      strict_two_scan: true
+    };
 
-      const res = await fetch('/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
-      });
+    let res = null;
+    let data = null;
+
+    try {
+      try {
+        res = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      } catch (firstErr) {
+        console.warn("Scan request network error; retrying ONCE with identical idempotency_key...", firstErr);
+        // Resend ONCE with the SAME idempotency_key
+        res = await fetch('/api/scan', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload)
+        });
+      }
 
       if (res.status === 401) {
         window.location.href = '/login?next=/';
         return;
       }
 
-      const data = await res.json();
+      data = await res.json();
 
       if (data.ok) {
         if (data.state === 'done') {
@@ -220,7 +233,8 @@
         if (data.state === 'unknown' && data.can_add) {
           unknownAction = ` &nbsp; <button class="btn btn-sm btn-primary" id="btn-quick-add-dev" type="button">Add as Device</button>`;
         }
-        setStatus('error', `✗ ${data.title}`, data.message, pendingState);
+        const nextPending = (data.pending !== undefined) ? data.pending : pendingState;
+        setStatus('error', `✗ ${data.title}`, data.message, nextPending);
         if (unknownAction) {
           subline.innerHTML = `${escapeHtml(data.message)} ${unknownAction}`;
           document.getElementById('btn-quick-add-dev')?.addEventListener('click', () => quickAddDevice(data.code));

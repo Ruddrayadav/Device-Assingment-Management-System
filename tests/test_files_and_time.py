@@ -14,7 +14,7 @@ import tests.conftest
 
 from main import app
 from tests.conftest import seed_initial_data_if_needed
-from app.config import BACKUP_DIR, DB_PATH
+from app.config import BACKUP_DIR, DB_PATH, now_kolkata, today_kolkata_str
 from app.database import engine, Base, SessionLocal
 from app.models import User, Device, Employee, Transaction, DeviceAssignment
 from app.auth import sign_session, decode_session
@@ -120,7 +120,7 @@ class FilesAndTimeTestSuite(unittest.TestCase):
         tx = db.query(Transaction).filter(Transaction.serial == "DEV_TEST_001").order_by(Transaction.id.desc()).first()
         self.assertIsNotNone(tx)
         self.assertEqual(tx.operator_name, "Rahul (Operator 1)")
-        self.assertEqual(tx.transaction_date, date.today().strftime("%Y-%m-%d"))
+        self.assertEqual(tx.transaction_date, today_kolkata_str())
         self.assertEqual(tx.department, "LOGISTICS")
 
         # Cleanup: Return the device
@@ -331,7 +331,7 @@ class FilesAndTimeTestSuite(unittest.TestCase):
         # 3. Modify a device to bump updated_at
         db = SessionLocal()
         dev = db.query(Device).first()
-        dev.updated_at = datetime.now() + timedelta(seconds=2)
+        dev.updated_at = now_kolkata() + timedelta(seconds=2)
         db.commit()
         db.close()
 

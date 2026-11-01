@@ -558,7 +558,13 @@ def validate_employee_import(db: Session, file_bytes: bytes, filename: str) -> D
         line_no = row.get("__line_no__", 0)
         emp_id_val = row.get(field_mapping["employee_id"], "").strip()
         name_val = row.get(field_mapping.get("name", ""), "").strip()
-        dept_val = row.get(field_mapping.get("department", ""), "").strip() or "Warehouse"
+        dept_raw = row.get(field_mapping.get("department", ""), "").strip()
+        dept_warning = None
+        if not dept_raw:
+            dept_val = "Warehouse"
+            dept_warning = "Department blank - will be set to Warehouse"
+        else:
+            dept_val = dept_raw
         status_raw = row.get(field_mapping.get("status", ""), "").strip()
         sr_no_val = row.get(field_mapping.get("sr_no", ""), "").strip()
 
@@ -615,6 +621,8 @@ def validate_employee_import(db: Session, file_bytes: bytes, filename: str) -> D
             "employee_id": emp_id_val,
             "name": name_val,
             "department": dept_val,
+            "warning": dept_warning,
+            "department_warning": dept_warning,
             "active": is_active,
             "status_str": status_display,
             "action": action_type
@@ -622,6 +630,7 @@ def validate_employee_import(db: Session, file_bytes: bytes, filename: str) -> D
 
     new_count = sum(1 for r in valid_rows if r["action"] == "NEW")
     update_count = sum(1 for r in valid_rows if r["action"] == "UPDATE")
+    warning_count = sum(1 for r in valid_rows if r.get("warning"))
 
     return {
         "ok": True,
@@ -632,6 +641,8 @@ def validate_employee_import(db: Session, file_bytes: bytes, filename: str) -> D
         "rejected_count": len(rejected_rows),
         "new_count": new_count,
         "update_count": update_count,
+        "warning_count": warning_count,
+        "blank_department_count": warning_count,
         "valid_rows": valid_rows,
         "rejected_rows": rejected_rows
     }

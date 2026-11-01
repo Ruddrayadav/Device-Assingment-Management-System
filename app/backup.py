@@ -3,6 +3,7 @@ import re
 import time
 import secrets
 import sqlite3
+import threading
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any, Optional, Tuple
@@ -148,12 +149,14 @@ def verify_backup_integrity(backup_path: str) -> bool:
 
 def get_backup_type(filename: str) -> str:
     """Returns badge type based on naming convention."""
-    if filename.startswith("hhd_backup_"):
-        return "Snapshot"
+    if "_auto" in filename:
+        return "Automatic"
     elif filename.startswith("uploaded_"):
         return "Uploaded"
-    elif filename.startswith("pre_restore_"):
+    elif "_pre_" in filename or filename.startswith("pre_"):
         return "Safety copy"
+    elif filename.startswith("hhd_backup_"):
+        return "Snapshot"
     return "Other"
 
 def get_live_db_stats() -> Dict[str, Any]:
@@ -352,3 +355,220 @@ def validate_uploaded_db(temp_path: Path) -> Tuple[bool, Optional[str]]:
         return False, info.get("error", "Database validation failed.")
 
     return True, None
+
+def apply_backup_retention(backup_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Applies backup retention policy:
+    1. 'auto' snapshots (e.g. hhd_backup_*_auto.db):
+       - Keep newest 14 snapshots.
+       - Plus up to 4 weekly historical snapshots from distinct ISO weeks beyond the newest 14.
+       - Delete older/excess 'auto' snapshots.
+    2. 'pre_*' safety copies (e.g. *_pre_* or pre_* including pre_migration_upgrade, pre_restore, pre_replace, pre_initial_data_reset):
+       - Keep newest 5.
+       - Delete older/excess pre_* copies.
+    3. NEVER delete:
+       - uploaded_* files
+       - admin manual snapshots (custom tags or manual backups created without _auto / _pre_)
+    """
+    target_dir = Path(backup_dir) if backup_dir else BACKUP_DIR
+    if not target_dir.exists():
+        return {"deleted": [], "deleted_auto": 0, "deleted_pre": 0}
+
+    deleted_files = []
+    deleted_auto_count = 0
+    deleted_pre_count = 0
+    all_files = [f for f in target_dir.glob("*.db") if f.is_file()]
+
+    auto_files = []
+    pre_files = []
+
+    for f in all_files:
+        name = f.name.lower()
+        if name.startswith("uploaded_"):
+            # Never delete uploaded files
+            continue
+        if "_auto" in name:
+            auto_files.append(f)
+        elif "_pre_" in name or name.startswith("pre_"):
+            pre_files.append(f)
+        # Any manual snapshot without _auto or _pre_ is strictly preserved
+
+    auto_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    pre_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+
+    # Keep newest 5 pre_* copies
+    for f in pre_files[5:]:
+        try:
+            f.unlink()
+            deleted_files.append(f.name)
+            deleted_pre_count += 1
+        except Exception:
+            pass
+
+    # Keep newest 14 auto snapshots + 4 weekly ones from previous distinct ISO weeks
+    auto_to_keep = set(auto_files[:14])
+    older_auto = auto_files[14:]
+
+    weekly_kept = set()
+    weekly_weeks_seen = set()
+    for f in older_auto:
+        mtime = datetime.fromtimestamp(f.stat().st_mtime)
+        year, week_num, _ = mtime.isocalendar()
+        week_key = (year, week_num)
+        if week_key not in weekly_weeks_seen and len(weekly_kept) < 4:
+            weekly_weeks_seen.add(week_key)
+            weekly_kept.add(f)
+
+    keep_auto_all = auto_to_keep.union(weekly_kept)
+    for f in older_auto:
+        if f not in keep_auto_all:
+            try:
+                f.unlink()
+                deleted_files.append(f.name)
+                deleted_auto_count += 1
+            except Exception:
+                pass
+
+    return {
+        "deleted": deleted_files,
+        "deleted_auto": deleted_auto_count,
+        "deleted_pre": deleted_pre_count
+    }
+
+def get_last_auto_backup_info(backup_dir: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Finds the most recent automatic backup and calculates whether it is older than 26 hours.
+    """
+    target_dir = Path(backup_dir) if backup_dir else BACKUP_DIR
+    if not target_dir.exists():
+        return {"last_backup_time_str": "Never", "last_backup_dt": None, "is_stale_26h": True, "filename": None, "age_hours": 999.0}
+
+    auto_files = [f for f in target_dir.glob("*.db") if f.is_file() and "_auto" in f.name.lower()]
+    if not auto_files:
+        return {"last_backup_time_str": "Never", "last_backup_dt": None, "is_stale_26h": True, "filename": None, "age_hours": 999.0}
+
+    auto_files.sort(key=lambda x: x.stat().st_mtime, reverse=True)
+    newest = auto_files[0]
+    mtime = datetime.fromtimestamp(newest.stat().st_mtime)
+    now = datetime.now()
+    age_hours = (now - mtime).total_seconds() / 3600.0
+
+    return {
+        "last_backup_time_str": fmt_datetime(mtime),
+        "last_backup_dt": mtime,
+        "is_stale_26h": age_hours > 26.0,
+        "filename": newest.name,
+        "age_hours": round(age_hours, 1)
+    }
+
+class BackupScheduler:
+    def __init__(self):
+        self._thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+        self._last_run_time: Optional[datetime] = None
+        self._last_daily_date: Optional[str] = None
+
+    def start(self):
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop_event.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True, name="BackupSchedulerThread")
+        self._thread.start()
+
+    def stop(self):
+        self._stop_event.set()
+        if self._thread:
+            self._thread.join(timeout=2.0)
+
+    def trigger_auto_backup(self) -> Optional[Dict[str, Any]]:
+        """Creates an auto snapshot, applies retention, and logs audit."""
+        from app.database import DB_PATH, SessionLocal
+        from app.models import AuditLog, SystemSetting
+        from app.config import now_kolkata
+
+        if not DB_PATH.exists() or DB_PATH.stat().st_size == 0:
+            return None
+
+        db = SessionLocal()
+        try:
+            res = create_safe_backup("auto")
+            apply_backup_retention()
+
+            now = now_kolkata()
+            setting = db.query(SystemSetting).filter(SystemSetting.key == "last_auto_backup_time").first()
+            if not setting:
+                setting = SystemSetting(key="last_auto_backup_time", value=now.isoformat(), description="Last Automatic Backup Timestamp")
+                db.add(setting)
+            else:
+                setting.value = now.isoformat()
+                setting.updated_at = now
+
+            audit = AuditLog(
+                timestamp=now,
+                user_id=None,
+                username="SYSTEM",
+                role="system",
+                action="AUTOMATIC_BACKUP",
+                target_type="BACKUP",
+                target_id=res["filename"],
+                details=f"Automatic snapshot created: {res['filename']} ({res['size_str']}). Retention applied."
+            )
+            db.add(audit)
+            db.commit()
+            return res
+        except Exception:
+            db.rollback()
+            return None
+        finally:
+            db.close()
+
+    def _run_loop(self):
+        from app.database import SessionLocal
+        from app.models import SystemSetting
+        from app.config import now_kolkata
+
+        # Initial startup delay (10 seconds)
+        self._stop_event.wait(10.0)
+
+        while not self._stop_event.is_set():
+            try:
+                now = now_kolkata()
+                today_str = now.strftime("%Y-%m-%d")
+
+                # Get configured backup_time (default "02:00")
+                backup_time_str = "02:00"
+                try:
+                    db = SessionLocal()
+                    setting = db.query(SystemSetting).filter(SystemSetting.key == "backup_time").first()
+                    if setting and setting.value:
+                        backup_time_str = setting.value.strip()
+                    db.close()
+                except Exception:
+                    pass
+
+                should_run = False
+
+                # 1. Daily scheduled backup at backup_time
+                current_hm = now.strftime("%H:%M")
+                if current_hm >= backup_time_str and self._last_daily_date != today_str:
+                    should_run = True
+                    self._last_daily_date = today_str
+
+                # 2. Every 6 hours while app runs
+                if self._last_run_time is None:
+                    last_info = get_last_auto_backup_info()
+                    if last_info["age_hours"] >= 6.0:
+                        should_run = True
+                elif (now - self._last_run_time).total_seconds() >= 6 * 3600:
+                    should_run = True
+
+                if should_run:
+                    self.trigger_auto_backup()
+                    self._last_run_time = now
+
+            except Exception:
+                pass
+
+            self._stop_event.wait(30.0)
+
+backup_scheduler = BackupScheduler()

@@ -1,5 +1,5 @@
 from pathlib import Path
-from fastapi import APIRouter, Request, Depends, status
+from fastapi import APIRouter, Request, Depends, status, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 from sqlalchemy.orm import Session
@@ -36,6 +36,12 @@ async def operator_station(
     user = get_current_user_optional(request, db)
     if not user:
         return RedirectResponse("/login?next=/", status_code=302)
+
+    if user.role == "display":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. Wall display account is restricted to display board only."
+        )
 
     board = get_live_board_data(db)
 

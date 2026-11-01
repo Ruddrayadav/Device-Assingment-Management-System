@@ -13,6 +13,7 @@ from app.database import engine, Base, SessionLocal, verify_database_state
 from app.models import User, Employee, Device
 from app.auth import is_initial_setup_required
 from app.migration import run_schema_migration
+from app.backup import backup_scheduler
 from app.routes import (
     auth_routes, operator_routes, scan_routes,
     admin_routes, report_routes, backup_routes,
@@ -131,7 +132,13 @@ async def lifespan(app: FastAPI):
         print(" Security Status:     Administrator configured · Setup endpoint locked")
         print(" Normal operation:    ACTIVE (Ready for scanning)")
         print("=" * 68 + "\n")
-    yield
+
+    # Start automated background backup scheduler
+    backup_scheduler.start()
+    try:
+        yield
+    finally:
+        backup_scheduler.stop()
 
 app = FastAPI(
     title="HHD Device Management System",

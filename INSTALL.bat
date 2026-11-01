@@ -49,6 +49,10 @@ echo [3/3] Initializing database and verifying schema...
 echo ==========================================================
 echo  INSTALLATION COMPLETE!
 echo.
+echo  IMPORTANT:
+echo  Never copy or commit the data folder; a new install must
+echo  start with an empty data folder so /setup runs.
+echo.
 echo  NEXT STEPS:
 echo  1. Launch the server anytime by double-clicking Start.bat
 echo  2. On fresh installations, open http://127.0.0.1:8000/setup

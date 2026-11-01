@@ -164,6 +164,31 @@ def interactive_setup(db, preset_username=None):
     print("   First-time setup mode is now permanently locked in the web app.")
     print("=" * 68 + "\n")
 
+def unlock_reset(db):
+    setting = db.query(SystemSetting).filter(SystemSetting.key == "go_live").first()
+    now = datetime.now()
+    if setting:
+        setting.value = "false"
+        setting.updated_at = now
+    else:
+        setting = SystemSetting(key="go_live", value="false", description="System Go-Live flag", updated_at=now)
+        db.add(setting)
+
+    audit = AuditLog(
+        timestamp=now,
+        user_id=None,
+        username="CLI_ADMIN",
+        role="admin",
+        action="RESET_UNLOCKED_CLI",
+        target_type="SECURITY",
+        target_id="go_live",
+        details="System go_live lock removed via setup_admin.py --unlock-reset.",
+        status="SUCCESS"
+    )
+    db.add(audit)
+    db.commit()
+    print("[+] System Go-Live lock has been removed. Initial data reset is now UNLOCKED.")
+
 def main():
     Base.metadata.create_all(bind=engine)
     db = SessionLocal()
@@ -172,6 +197,7 @@ def main():
         parser.add_argument("--list", action="store_true", help="List all configured administrator accounts")
         parser.add_argument("--unlock", type=str, metavar="USERNAME", help="Unlock a user locked out by login rate limiting")
         parser.add_argument("--reset", type=str, metavar="USERNAME", help="Reset password and promote user to administrator")
+        parser.add_argument("--unlock-reset", action="store_true", help="Unlock initial data reset (/admin/reset) after go-live")
         args = parser.parse_args()
 
         if args.list:
@@ -180,6 +206,8 @@ def main():
             unlock_user(db, args.unlock)
         elif args.reset:
             interactive_setup(db, preset_username=args.reset)
+        elif args.unlock_reset:
+            unlock_reset(db)
         else:
             interactive_setup(db)
     finally:

@@ -218,28 +218,26 @@ async def login_submit(
     username_clean = username.strip()
     client_ip = request.client.host if request.client else "127.0.0.1"
 
-    # 1. Check brute-force lockout
-    is_locked, secs = login_limiter.is_locked_out(username_clean.lower())
-    if not is_locked:
-        is_locked, secs = login_limiter.is_locked_out(client_ip)
+    # 1. Check brute-force lockout (username + client IP pair, and high IP limit)
+    is_locked, secs, lock_reason = login_limiter.is_locked_out_pair(username_clean.lower(), client_ip)
 
     if is_locked:
+        lock_detail = "from this PC" if lock_reason == "ip" else "for this account on this PC"
         return templates.TemplateResponse(request=request, name="login.html", context={
             "title": "Sign In - HHD System",
-            "error": f"Too many failed login attempts. Account temporarily locked for {secs} seconds. Please wait or contact an administrator to unlock immediately.",
+            "error": f"Too many failed login attempts {lock_detail}. Temporarily locked for {secs} seconds. Please wait or contact an administrator to unlock immediately.",
             "username": username_clean
         }, status_code=status.HTTP_429_TOO_MANY_REQUESTS)
 
     user = db.query(User).filter(User.username == username_clean, User.active == True).first()
 
     if not user or not verify_password(password, user.password_hash):
-        # Record failure for both username and IP
-        attempts_u, lock_u = login_limiter.record_failure(username_clean.lower())
-        attempts_ip, lock_ip = login_limiter.record_failure(client_ip)
+        # Record failure for both (username, IP) pair and IP-only limit
+        attempts_pair, lock_pair, is_ip_locked = login_limiter.record_failure_pair(username_clean.lower(), client_ip)
 
         # Progressive backoff delay
-        if attempts_u >= 3:
-            await asyncio.sleep(min(2.0, 0.5 * (attempts_u - 2)))
+        if attempts_pair >= 3:
+            await asyncio.sleep(min(2.0, 0.5 * (attempts_pair - 2)))
 
         # Audit log failed attempt
         try:
@@ -250,18 +248,18 @@ async def login_submit(
                 action="LOGIN_FAILED",
                 target_type="AUTH",
                 target_id=username_clean,
-                details=f"Failed login attempt from IP {client_ip} (Attempt #{attempts_u})"
+                details=f"Failed login attempt from IP {client_ip} (Attempt #{attempts_pair})"
             )
             db.add(audit)
             db.commit()
         except Exception:
             db.rollback()
 
-        if lock_u > 0 or lock_ip > 0:
-            err_msg = f"Account locked for {lock_u or lock_ip} seconds due to repeated failed attempts. Contact administrator to unlock."
+        if lock_pair > 0 or is_ip_locked:
+            err_msg = f"Account locked for {lock_pair or 300} seconds due to repeated failed attempts. Contact administrator to unlock."
             status_code = status.HTTP_429_TOO_MANY_REQUESTS
         else:
-            remaining = 5 - attempts_u
+            remaining = 5 - attempts_pair
             err_msg = f"Invalid username or password. ({remaining} attempt{'s' if remaining != 1 else ''} remaining before temporary lockout)"
             status_code = status.HTTP_400_BAD_REQUEST
 
@@ -271,9 +269,8 @@ async def login_submit(
             "username": username_clean
         }, status_code=status_code)
 
-    # Valid login: reset rate limiter
-    login_limiter.reset(username_clean.lower())
-    login_limiter.reset(client_ip)
+    # Valid login: reset rate limiter pair
+    login_limiter.reset_pair(username_clean.lower(), client_ip)
 
     # Audit log successful login
     try:
@@ -297,14 +294,22 @@ async def login_submit(
         "role": user.role,
         "full_name": user.full_name or user.username
     }
-    token = sign_session(session_data, max_age_seconds=43200)
+    # Role "display" receives a 30-day sliding session
+    max_age_seconds = 30 * 86400 if user.role == "display" else 43200
+    token = sign_session(session_data, max_age_seconds=max_age_seconds)
 
-    target_redirect = next_url if (next_url and next_url.startswith("/") and not next_url.startswith("//")) else ("/" if user.role == "operator" else "/admin")
+    if user.role == "display":
+        target_redirect = "/board"
+    elif user.role == "admin":
+        target_redirect = next_url if (next_url and next_url != "/" and next_url.startswith("/") and not next_url.startswith("//")) else "/admin"
+    else:
+        target_redirect = next_url if (next_url and next_url.startswith("/") and not next_url.startswith("//")) else "/"
+
     resp = RedirectResponse(target_redirect, status_code=status.HTTP_302_FOUND)
     resp.set_cookie(
         key="hhd_session",
         value=token,
-        max_age=43200,
+        max_age=max_age_seconds,
         httponly=True,
         samesite="lax",
         path="/"

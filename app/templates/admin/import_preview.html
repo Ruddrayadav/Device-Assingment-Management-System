@@ -33,6 +33,12 @@
       {{ preview.rejected_count }}
     </div>
   </div>
+  {% if preview.warning_count and preview.warning_count > 0 %}
+  <div class="kpi-card" style="border: 1px solid rgba(251, 191, 36, 0.4);">
+    <div class="kpi-label" style="color: #fbbf24;">⚠️ Row Warnings</div>
+    <div class="kpi-value" style="color: #fbbf24;">{{ preview.warning_count }}</div>
+  </div>
+  {% endif %}
 </div>
 
 <!-- Rejected Rows Alert Table (if any) -->
@@ -128,7 +134,14 @@
           {% else %}
             <td class="mono"><b>{{ r.employee_id }}</b></td>
             <td><b>{{ r.name }}</b></td>
-            <td><span class="badge badge-secondary">{{ r.department }}</span></td>
+            <td>
+              <span class="badge badge-secondary">{{ r.department }}</span>
+              {% if r.warning %}
+                <div style="font-size: 0.72rem; color: #fbbf24; margin-top: 0.25rem; font-weight: 600;">
+                  ⚠️ {{ r.warning }}
+                </div>
+              {% endif %}
+            </td>
             <td>
               <span class="badge {{ 'badge-available' if r.active else 'badge-damaged' }}">
                 {{ r.status_str }}

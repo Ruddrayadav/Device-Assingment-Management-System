@@ -23,7 +23,9 @@
   <div style="display: flex; gap: 0.5rem; flex-wrap: wrap;">
     <a href="/reports/excel" class="btn btn-primary">📊 Download 7-Sheet Report</a>
     <a href="/admin/import" class="btn btn-secondary">📥 Master Excel Import</a>
+    {% if not is_live %}
     <a href="/admin/reset" class="btn btn-secondary" style="color: #ef4444; border-color: rgba(239,68,68,0.3);">⚠️ Initial Data Reset</a>
+    {% endif %}
   </div>
 </div>
 

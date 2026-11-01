@@ -17,7 +17,7 @@ from app.models import (
 )
 from app.auth import (
     require_admin, require_inventory_manager, hash_password, verify_password, login_limiter,
-    ROLE_ADMIN, ROLE_INVENTORY_MANAGER, ROLE_OPERATOR, VALID_ROLES
+    ROLE_ADMIN, ROLE_INVENTORY_MANAGER, ROLE_OPERATOR, ROLE_DISPLAY, VALID_ROLES
 )
 from app.audit import record_audit
 from app.backup import create_safe_backup
@@ -36,6 +36,10 @@ router = APIRouter(prefix="/admin")
 def get_configured_cutoff_time(db: Session) -> str:
     setting = db.query(SystemSetting).filter(SystemSetting.key == "daily_cutoff_time").first()
     return setting.value if setting else DEFAULT_DAILY_CUTOFF_TIME
+
+def is_system_live(db: Session) -> bool:
+    setting = db.query(SystemSetting).filter(SystemSetting.key == "go_live").first()
+    return setting.value.lower() == "true" if setting and setting.value else False
 
 # -------------------------------------------------------------
 # 1. ADMIN DASHBOARD - 24/7 OPERATIONAL CENTER
@@ -137,7 +141,8 @@ async def admin_dashboard(
         "end_date": end_date,
         "operator_filter": operator_filter,
         "dept_filter": dept_filter,
-        "legacy_accounts": legacy_accounts
+        "legacy_accounts": legacy_accounts,
+        "is_live": is_system_live(db)
     })
 
 # -------------------------------------------------------------
@@ -1498,10 +1503,22 @@ async def admin_settings_page(
     db: Session = Depends(get_db)
 ):
     current_cutoff = get_configured_cutoff_time(db)
+
+    backup_setting = db.query(SystemSetting).filter(SystemSetting.key == "backup_time").first()
+    current_backup_time = backup_setting.value if backup_setting and backup_setting.value else "02:00"
+
+    max_dev_setting = db.query(SystemSetting).filter(SystemSetting.key == "max_devices_per_worker").first()
+    try:
+        max_devices = int(max_dev_setting.value) if max_dev_setting and max_dev_setting.value is not None else 1
+    except Exception:
+        max_devices = 1
+
     return templates.TemplateResponse(request=request, name="admin/settings.html", context={
         "title": "Settings - HHD Management",
         "user": admin,
         "current_cutoff": current_cutoff,
+        "backup_time": current_backup_time,
+        "max_devices_per_worker": max_devices,
         "msg": request.query_params.get("msg"),
         "error": request.query_params.get("error")
     })
@@ -1510,6 +1527,8 @@ async def admin_settings_page(
 async def update_admin_settings(
     request: Request,
     daily_cutoff_time: str = Form(...),
+    backup_time: str = Form("02:00"),
+    max_devices_per_worker: int = Form(1),
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
@@ -1521,25 +1540,64 @@ async def update_admin_settings(
         if hour < 0 or hour > 23 or minute < 0 or minute > 59:
             raise ValueError()
     except Exception:
-        return RedirectResponse("/admin/settings?error=Invalid+time+format.+Expected+HH:MM+24-hour+format.", status_code=302)
+        return RedirectResponse("/admin/settings?error=Invalid+cutoff+time+format.+Expected+HH:MM+24-hour+format.", status_code=302)
 
+    btime_str = backup_time.strip()
+    try:
+        bparts = btime_str.split(":")
+        bhour = int(bparts[0])
+        bminute = int(bparts[1])
+        if bhour < 0 or bhour > 23 or bminute < 0 or bminute > 59:
+            raise ValueError()
+    except Exception:
+        return RedirectResponse("/admin/settings?error=Invalid+backup+time+format.+Expected+HH:MM+24-hour+format.", status_code=302)
+
+    if max_devices_per_worker < 0:
+        return RedirectResponse("/admin/settings?error=Max+devices+per+worker+must+be+0+(unlimited)+or+greater.", status_code=302)
+
+    now = now_kolkata()
+
+    # 1. Update Cutoff
     setting = db.query(SystemSetting).filter(SystemSetting.key == "daily_cutoff_time").first()
     prev_val = setting.value if setting else "19:00"
     if setting:
         setting.value = time_str
-        setting.updated_at = now_kolkata()
+        setting.updated_at = now
     else:
         setting = SystemSetting(key="daily_cutoff_time", value=time_str, description="Daily Reporting Cutoff Time")
         db.add(setting)
 
+    # 2. Update Backup Time
+    b_setting = db.query(SystemSetting).filter(SystemSetting.key == "backup_time").first()
+    b_prev = b_setting.value if b_setting else "02:00"
+    if b_setting:
+        b_setting.value = btime_str
+        b_setting.updated_at = now
+    else:
+        b_setting = SystemSetting(key="backup_time", value=btime_str, description="Daily Automatic Backup Time")
+        db.add(b_setting)
+
+    # 3. Update Max Devices Per Worker
+    m_setting = db.query(SystemSetting).filter(SystemSetting.key == "max_devices_per_worker").first()
+    m_prev = m_setting.value if m_setting else "1"
+    m_new_str = str(max_devices_per_worker)
+    if m_setting:
+        m_setting.value = m_new_str
+        m_setting.updated_at = now
+    else:
+        m_setting = SystemSetting(key="max_devices_per_worker", value=m_new_str, description="Max Devices Per Worker (0 = unlimited)")
+        db.add(m_setting)
+
     record_audit(
-        db=db, user=admin, action="SETTINGS_UPDATED", target_type="SYSTEM", target_id="daily_cutoff_time",
-        details=f"Daily reporting cutoff changed: {prev_val} -> {time_str} by {admin.username}",
-        previous_value=prev_val, new_value=time_str, status="SUCCESS"
+        db=db, user=admin, action="SETTINGS_UPDATED", target_type="SYSTEM", target_id="system_settings",
+        details=f"Settings updated by {admin.username}: Cutoff={time_str}, BackupTime={btime_str}, MaxDevices={m_new_str}",
+        previous_value=f"Cutoff={prev_val}, BackupTime={b_prev}, MaxDevices={m_prev}",
+        new_value=f"Cutoff={time_str}, BackupTime={btime_str}, MaxDevices={m_new_str}",
+        status="SUCCESS"
     )
     db.commit()
 
-    return RedirectResponse(f"/admin/settings?msg=Daily+cutoff+time+updated+to+{time_str}", status_code=302)
+    return RedirectResponse(f"/admin/settings?msg=Operational+settings+updated+successfully", status_code=302)
 
 # -------------------------------------------------------------
 # 10. USER MANAGEMENT (ADMIN, INVENTORY MANAGER, OPERATOR)
@@ -1571,7 +1629,7 @@ async def admin_users(
         "title": "User Accounts - Admin",
         "user": admin,
         "users": user_rows,
-        "roles": [ROLE_ADMIN, ROLE_INVENTORY_MANAGER, ROLE_OPERATOR],
+        "roles": [ROLE_ADMIN, ROLE_INVENTORY_MANAGER, ROLE_OPERATOR, ROLE_DISPLAY],
         "legacy_accounts": legacy_accounts,
         "msg": request.query_params.get("msg"),
         "error": request.query_params.get("error")
@@ -1659,7 +1717,7 @@ async def unlock_user_account(
     return RedirectResponse("/admin/users?msg=User+account+unlocked+successfully", status_code=302)
 
 # -------------------------------------------------------------
-# 11. CONTROLLED INITIAL DATA RESET (DEMO DATA CLEANUP)
+# 11. CONTROLLED INITIAL DATA RESET (DEMO DATA CLEANUP & GO-LIVE LOCK)
 # -------------------------------------------------------------
 @router.get("/reset", response_class=HTMLResponse)
 async def reset_page(
@@ -1667,6 +1725,8 @@ async def reset_page(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
+    is_live = is_system_live(db)
+    issued_count = db.query(Device).filter(Device.status == "Issued").count()
     dev_count = db.query(Device).count()
     emp_count = db.query(Employee).count()
     tx_count = db.query(Transaction).count()
@@ -1676,6 +1736,8 @@ async def reset_page(
     return templates.TemplateResponse(request=request, name="admin/reset.html", context={
         "title": "Controlled Initial Data Reset - Admin",
         "user": admin,
+        "is_live": is_live,
+        "issued_count": issued_count,
         "counts": {
             "devices": dev_count,
             "employees": emp_count,
@@ -1687,6 +1749,27 @@ async def reset_page(
         "error": request.query_params.get("error")
     })
 
+@router.post("/reset/go-live")
+async def trigger_go_live(
+    admin: User = Depends(require_admin),
+    db: Session = Depends(get_db)
+):
+    setting = db.query(SystemSetting).filter(SystemSetting.key == "go_live").first()
+    now = now_kolkata()
+    if not setting:
+        setting = SystemSetting(key="go_live", value="true", description="System Go-Live flag (locks demo reset)", updated_at=now)
+        db.add(setting)
+    else:
+        setting.value = "true"
+        setting.updated_at = now
+
+    record_audit(
+        db=db, user=admin, action="SYSTEM_GO_LIVE", target_type="SYSTEM", target_id="go_live",
+        details=f"Admin {admin.username} marked system as LIVE. Initial data reset is permanently locked."
+    )
+    db.commit()
+    return RedirectResponse("/admin/reset?msg=System+is+now+LIVE.+Demo+reset+is+permanently+locked.", status_code=302)
+
 @router.post("/reset")
 async def execute_initial_data_reset(
     request: Request,
@@ -1695,6 +1778,20 @@ async def execute_initial_data_reset(
     admin: User = Depends(require_admin),
     db: Session = Depends(get_db)
 ):
+    if is_system_live(db):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="System is LIVE. Demo reset is permanently locked."
+        )
+
+    # Even before go-live, refuse the reset while any device has status Issued
+    issued_count = db.query(Device).filter(Device.status == "Issued").count()
+    if issued_count > 0:
+        return RedirectResponse(
+            f"/admin/reset?error=Reset+refused:+{issued_count}+device{'s+are' if issued_count != 1 else '+is'}+currently+Issued.+All+devices+must+be+returned+before+reset.",
+            status_code=302
+        )
+
     if not verify_password(admin_password, admin.password_hash):
         return RedirectResponse("/admin/reset?error=Invalid+admin+password.+Reset+aborted.", status_code=302)
 

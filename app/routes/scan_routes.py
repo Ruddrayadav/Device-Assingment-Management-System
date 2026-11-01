@@ -1,14 +1,14 @@
 import time
 from datetime import datetime, date
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, Request, HTTPException, status
+from fastapi import APIRouter, Depends, Request, HTTPException, status, Response
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 
 from app.database import get_db
 from app.models import User, Device, Employee, Transaction, DamageReport, DeviceAssignment, AuditLog
-from app.auth import require_user, require_admin, get_current_user_optional
+from app.auth import require_user, require_admin, get_current_user_optional, sign_session
 from app.scan_engine import (
     process_scan_pipeline, return_device_atomic, issue_device_atomic,
     sanitize_code, ScanException
@@ -336,10 +336,29 @@ async def handle_damage_report(
 
 @router.get("/board/live")
 async def get_live_board(
+    response: Response,
     v: Optional[str] = None,
     user: User = Depends(require_user),
     db: Session = Depends(get_db)
 ):
+    if user.role == "display":
+        # Renew sliding session for 30 days on every poll
+        session_data = {
+            "user_id": user.id,
+            "username": user.username,
+            "role": user.role,
+            "full_name": user.full_name or user.username
+        }
+        refreshed_token = sign_session(session_data, max_age_seconds=30 * 86400)
+        response.set_cookie(
+            key="hhd_session",
+            value=refreshed_token,
+            max_age=30 * 86400,
+            httponly=True,
+            samesite="lax",
+            path="/"
+        )
+
     current_ver = get_board_version(db)
     if v and v == current_ver:
         return {"changed": False}

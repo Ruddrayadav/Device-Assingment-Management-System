@@ -1,4 +1,5 @@
 import re
+import time
 from datetime import datetime, date
 from typing import Optional, Dict, Any, Tuple
 from sqlalchemy.orm import Session
@@ -6,9 +7,10 @@ from sqlalchemy import func, or_
 from app.database import SCAN_WRITE_LOCK
 from app.models import (
     Device, Employee, DeviceAssignment, Transaction,
-    DamageReport, User
+    DamageReport, User, SystemSetting
 )
 from app.config import DAMAGE_CATEGORIES, now_kolkata, today_kolkata_str
+from app.audit import record_audit
 
 class ScanException(Exception):
     def __init__(self, message: str, title: str = "Scan Rejected", code: str = None):
@@ -413,6 +415,20 @@ def return_device_atomic(
         }
 
 
+def get_max_devices_per_worker(db: Session) -> int:
+    """
+    Returns configured maximum devices allowed per worker.
+    0 means unlimited. Defaults to 1 if not set or invalid.
+    """
+    try:
+        setting = db.query(SystemSetting).filter(SystemSetting.key == "max_devices_per_worker").first()
+        if setting and setting.value is not None:
+            return int(setting.value)
+    except Exception:
+        pass
+    return 1
+
+
 def process_scan_pipeline(
     db: Session,
     code: str,
@@ -694,6 +710,49 @@ def process_scan_pipeline(
                         "idempotent_replay": True
                     }
 
+                # Check max devices per worker limit if not already confirmed
+                max_devs = get_max_devices_per_worker(db)
+                if max_devs > 0:
+                    held_devs = db.query(Device).filter(Device.assigned_employee_id == p_code, Device.status == "Issued").all()
+                    if len(held_devs) >= max_devs:
+                        warn_emp = pending.get("warn_emp") if pending else None
+                        warn_time = pending.get("warn_time") if pending else None
+                        now_t = time.time()
+                        is_confirmed = bool(
+                            pending.get("override_confirmed") or
+                            (warn_emp == p_code and warn_time is not None and (now_t - float(warn_time)) <= 10.0)
+                        )
+                        held_serials = ", ".join([d.serial for d in held_devs])
+                        emp_holder = db.query(Employee).filter(Employee.employee_id == p_code).first()
+                        emp_hname = emp_holder.name if emp_holder else p_code
+                        if not is_confirmed:
+                            return {
+                                "ok": False,
+                                "state": "error",
+                                "title": "Max Devices Limit",
+                                "message": f"Worker {emp_hname} already holds device {held_serials}. Scan worker barcode again within 10s to confirm override.",
+                                "pending": {
+                                    "type": "device",
+                                    "code": dev.serial,
+                                    "warn_emp": p_code,
+                                    "warn_time": now_t,
+                                    "label": f"Device: {dev.serial} (Confirm {emp_hname})"
+                                }
+                            }
+                        else:
+                            try:
+                                record_audit(
+                                    db=db,
+                                    user=operator,
+                                    action="MAX_DEVICES_OVERRIDE",
+                                    target_type="EMPLOYEE",
+                                    target_id=p_code,
+                                    details=f"Operator {operator.username} overrode max devices ({max_devs}) for worker {emp_hname} ({p_code}). Held devices: {held_serials}. Newly issued: {dev.serial}."
+                                )
+                                db.commit()
+                            except Exception:
+                                db.rollback()
+
                 res = issue_device_atomic(
                     db=db,
                     device_serial=dev.serial,
@@ -773,6 +832,47 @@ def process_scan_pipeline(
                         "idempotent_replay": True
                     }
 
+                # Check max devices per worker limit
+                max_devs = get_max_devices_per_worker(db)
+                if max_devs > 0:
+                    held_devs = db.query(Device).filter(Device.assigned_employee_id == emp.employee_id, Device.status == "Issued").all()
+                    if len(held_devs) >= max_devs:
+                        warn_emp = pending.get("warn_emp") if pending else None
+                        warn_time = pending.get("warn_time") if pending else None
+                        now_t = time.time()
+                        is_confirmed = bool(
+                            pending.get("override_confirmed") or
+                            (warn_emp == emp.employee_id and warn_time is not None and (now_t - float(warn_time)) <= 10.0)
+                        )
+                        held_serials = ", ".join([d.serial for d in held_devs])
+                        if not is_confirmed:
+                            return {
+                                "ok": False,
+                                "state": "error",
+                                "title": "Max Devices Limit",
+                                "message": f"Worker {emp.name} already holds device {held_serials}. Scan worker barcode again within 10s to confirm override.",
+                                "pending": {
+                                    "type": "device",
+                                    "code": p_code,
+                                    "warn_emp": emp.employee_id,
+                                    "warn_time": now_t,
+                                    "label": f"Device: {p_code} (Confirm {emp.name})"
+                                }
+                            }
+                        else:
+                            try:
+                                record_audit(
+                                    db=db,
+                                    user=operator,
+                                    action="MAX_DEVICES_OVERRIDE",
+                                    target_type="EMPLOYEE",
+                                    target_id=emp.employee_id,
+                                    details=f"Operator {operator.username} overrode max devices ({max_devs}) for worker {emp.name} ({emp.employee_id}). Held devices: {held_serials}. Newly issued: {p_code}."
+                                )
+                                db.commit()
+                            except Exception:
+                                db.rollback()
+
                 res = issue_device_atomic(
                     db=db,
                     device_serial=p_code,
@@ -792,10 +892,51 @@ def process_scan_pipeline(
                 }
             else:
                 # Count current held devices
-                held = db.query(Device).filter(
+                held_devs = db.query(Device).filter(
                     Device.assigned_employee_id == emp.employee_id,
                     Device.status == "Issued"
-                ).count()
+                ).all()
+                held = len(held_devs)
+                max_devs = get_max_devices_per_worker(db)
+                if max_devs > 0 and held >= max_devs:
+                    warn_emp = pending.get("warn_emp") if pending else None
+                    warn_time = pending.get("warn_time") if pending else None
+                    now_t = time.time()
+                    is_confirmed = bool(
+                        pending.get("override_confirmed") or
+                        (warn_emp == emp.employee_id and warn_time is not None and (now_t - float(warn_time)) <= 10.0)
+                    )
+                    held_serials = ", ".join([d.serial for d in held_devs])
+                    if not is_confirmed:
+                        return {
+                            "ok": False,
+                            "state": "error",
+                            "title": "Max Devices Limit",
+                            "message": f"Worker {emp.name} already holds device {held_serials}. Scan worker barcode again within 10s to confirm override.",
+                            "pending": {
+                                "type": "employee_warn",
+                                "code": emp.employee_id,
+                                "warn_emp": emp.employee_id,
+                                "warn_time": now_t,
+                                "label": f"Confirm Worker: {emp.name}"
+                            }
+                        }
+                    else:
+                        return {
+                            "ok": True,
+                            "state": "pending",
+                            "title": f"Override Confirmed · {emp.name}",
+                            "message": f"Override confirmed for {emp.name} (holds {held_serials}). Now scan Device barcode to issue.",
+                            "action": "PendingEmployee",
+                            "pending": {
+                                "type": "employee",
+                                "code": emp.employee_id,
+                                "override_confirmed": True,
+                                "warn_emp": emp.employee_id,
+                                "label": f"{emp.name} (Override Active)"
+                            }
+                        }
+
                 held_str = f" · Currently holds {held} device{'s' if held != 1 else ''}" if held > 0 else " · Holds 0 devices"
                 return {
                     "ok": True,
