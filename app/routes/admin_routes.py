@@ -498,6 +498,37 @@ async def admin_save_employee(
     db.commit()
     return RedirectResponse(f"/admin/employees?msg=Employee+{eid}+saved+successfully", status_code=302)
 
+@router.post("/employees/{employee_id}/toggle")
+@router.get("/employees/{employee_id}/toggle")
+async def toggle_employee_active(
+    employee_id: str,
+    user: User = Depends(require_inventory_manager),
+    db: Session = Depends(get_db)
+):
+    eid = employee_id.strip()
+    emp = db.query(Employee).filter(func.lower(Employee.employee_id) == eid.lower()).first()
+    if not emp:
+        return RedirectResponse("/admin/employees?error=Employee+not+found", status_code=302)
+
+    emp.active = not emp.active
+    emp.updated_at = now_kolkata()
+    new_status = "Activated" if emp.active else "Deactivated"
+    record_audit(
+        db=db,
+        user=user,
+        action="EMPLOYEE_TOGGLED",
+        target_type="EMPLOYEE",
+        target_id=emp.employee_id,
+        details=f"Employee {emp.name} ({emp.employee_id}) {new_status.lower()} by {user.username}",
+        status="SUCCESS"
+    )
+    db.commit()
+
+    return RedirectResponse(
+        f"/admin/employees?msg=Employee+{emp.employee_id}+{new_status.lower()}+successfully",
+        status_code=302
+    )
+
 # -------------------------------------------------------------
 # 4. DAMAGE, REPAIR & SERVICE CENTRE WORKFLOW
 # -------------------------------------------------------------

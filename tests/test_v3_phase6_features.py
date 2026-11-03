@@ -402,5 +402,54 @@ class V3Phase6FeaturesTestSuite(unittest.TestCase):
         finally:
             db.close()
 
+    # -------------------------------------------------------------
+    # 7. Employee Activate / Deactivate Toggle
+    # -------------------------------------------------------------
+    def test_employee_toggle_active_status(self):
+        """POST /admin/employees/{id}/toggle toggles active state, records audit log, and redirects without blank screen."""
+        token_admin = sign_session({"username": "hhdadmin", "role": ROLE_ADMIN})
+        self.client.cookies.set("hhd_session", token_admin)
+
+        db = SessionLocal()
+        try:
+            emp = db.query(Employee).filter(Employee.employee_id == "EMP_TOGGLE_TEST").first()
+            if not emp:
+                emp = Employee(employee_id="EMP_TOGGLE_TEST", name="Toggle Worker", department="Warehouse", active=True)
+                db.add(emp)
+                db.commit()
+            else:
+                emp.active = True
+                db.commit()
+        finally:
+            db.close()
+
+        # 1. Toggle Active -> Inactive
+        res1 = self.client.post("/admin/employees/EMP_TOGGLE_TEST/toggle", follow_redirects=False)
+        self.assertEqual(res1.status_code, 302)
+        self.assertIn("deactivated", res1.headers.get("location", ""))
+
+        db = SessionLocal()
+        emp1 = db.query(Employee).filter(Employee.employee_id == "EMP_TOGGLE_TEST").first()
+        self.assertFalse(emp1.active)
+        db.close()
+
+        # 2. Toggle Inactive -> Active
+        res2 = self.client.post("/admin/employees/EMP_TOGGLE_TEST/toggle", follow_redirects=False)
+        self.assertEqual(res2.status_code, 302)
+        self.assertIn("activated", res2.headers.get("location", ""))
+
+        db = SessionLocal()
+        emp2 = db.query(Employee).filter(Employee.employee_id == "EMP_TOGGLE_TEST").first()
+        self.assertTrue(emp2.active)
+
+        # 3. Verify audit log exists
+        audit = db.query(AuditLog).filter(
+            AuditLog.action == "EMPLOYEE_TOGGLED",
+            AuditLog.target_id == "EMP_TOGGLE_TEST"
+        ).order_by(AuditLog.id.desc()).first()
+        self.assertIsNotNone(audit)
+        self.assertIn("activated", audit.details.lower())
+        db.close()
+
 if __name__ == "__main__":
     unittest.main()
